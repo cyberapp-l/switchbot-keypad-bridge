@@ -15,7 +15,6 @@ wifi:
   password: !secret wifi_password
 
 logger:
-  level: DEBUG
 
 api:
 
@@ -38,19 +37,14 @@ switchbot_keypad_bridge:
     name: "BLE MAC"
 
   # Triggered when the keypad sends a "lock" command.
-  on_lock:
-    - logger.log: "Keypad: lock"
+  # on_lock:
+  #   - logger.log: "Keypad: lock"
 
   # Triggered when the keypad sends an "unlock" command.
-  # The trigger exposes two lambdas: `method` (std::string: "pin" or
-  # "fingerprint") and `index` (int: credential slot, -1 if unknown).
+  # Two lambdas are in scope: `method` (std::string: "pin", "fingerprint",
+  # "face", or "unknown") and `index` (int: credential slot).
   on_unlock:
-    - logger.log:
-        format: "Keypad: unlock via %s (slot %d)"
-        args: ['method.c_str()', 'index']
-
-    # Notify Home Assistant by firing a custom event with the rich payload.
-    # Requires nothing extra in `api:` — `homeassistant.event` is built-in.
+    # Forward to Home Assistant as a custom event with the rich payload.
     - homeassistant.event:
         event: esphome.switchbot_keypad_unlock
         data:

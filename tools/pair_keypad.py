@@ -7,6 +7,11 @@ Usage:
 Where to find the addresses:
     KEYPAD_MAC  SwitchBot app -> open the keypad device -> ... -> Device Info -> BLE Address
     ESP_MAC     ESPHome boot log ("BLE address: ...") or Home Assistant device page ("BLE MAC" sensor)
+
+The keypad model (Original/Touch vs Vision/Vision Pro) is auto-detected from
+the user-credential key_id returned by the SwitchBot cloud — see
+KEYPAD_PRESETS below. The bridge firmware must be configured with the same
+"token slot" id (default 0x88 = Original; the Vision uses 0xC6).
 """
 
 import argparse
@@ -47,7 +52,7 @@ def _api_post(url: str, data: dict | None = None, headers: dict | None = None) -
 
 
 def fetch_keypad_credentials(keypad_mac: str, username: str, password: str) -> tuple[int, bytes]:
-    print("Fetching keypad credentials from SwitchBot cloud...")
+    print("Fetching keypad credentials...")
 
     auth = _api_post(
         f"{_API_ACCOUNT_BASE}/account/api/v1/user/login",
@@ -78,6 +83,42 @@ def fetch_keypad_credentials(keypad_mac: str, username: str, password: str) -> t
     )
     key_info = comm["communicationKey"]
     return int(key_info["keyId"], 16), bytes.fromhex(key_info["key"])
+
+
+# ---------------------------------------------------------------------------
+# Per-model pairing presets
+# ---------------------------------------------------------------------------
+#
+# Different keypad families speak slightly different dialects of the same
+# pairing ceremony. The cloud API reports the per-device user credential
+# `key_id` (the one used to encrypt the pairing session), which doubles as a
+# reliable family fingerprint:
+#
+#   0x7E -> Keypad / Keypad Touch  (token slot 0x88, family 0x52)
+#   0x72 -> Keypad Vision / Vision Pro (token slot 0xC6, family 0x53)
+#
+# The bridge firmware needs to know which "token slot" the keypad will use to
+# look up its peer MAC at runtime, hence the same value is configured on both
+# sides.
+
+KEYPAD_PRESETS = {
+    0x7E: {
+        "name": "Keypad / Keypad Touch",
+        "shared_slot": 0x88,
+        "slot_init_nonce": 0x69,
+        "enter_pairing": bytes.fromhex("0f52010700"),
+        "capabilities_probe": None,
+        "finalize_tail": bytes.fromhex("000809040507"),
+    },
+    0x72: {
+        "name": "Keypad Vision / Vision Pro",
+        "shared_slot": 0xC6,
+        "slot_init_nonce": 0x80,
+        "enter_pairing": bytes.fromhex("0f530107"),
+        "capabilities_probe": bytes.fromhex("0f530703"),
+        "finalize_tail": bytes.fromhex("040401050809"),
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -138,28 +179,38 @@ class Pairer:
 async def _run_pairing(
     keypad_mac: str, esp_mac: str, shared_token: bytes, key_id: int, key: bytes
 ):
-    print("Connecting to keypad...")
+    preset = KEYPAD_PRESETS.get(key_id)
+    if preset is None:
+        raise RuntimeError(
+            f"Unsupported keypad family (cloud reported key_id=0x{key_id:02X}). "
+            f"Known families: " + ", ".join(f"0x{k:02X} ({v['name']})" for k, v in KEYPAD_PRESETS.items())
+        )
+
+    slot = preset["shared_slot"]
+    nonce = preset["slot_init_nonce"]
+    print(f"Detected keypad: {preset['name']}")
+
+    print("Pairing...")
     async with BleakClient(keypad_mac) as client:
         p = Pairer(client, key_id, key)
         await p.start()
 
         await p.request_iv()
-        print("Session established.")
 
         esp_mac_bytes = bytes.fromhex(esp_mac.replace(":", ""))
 
-        await p.send(bytes.fromhex("0f52010700"))
+        await p.send(preset["enter_pairing"])
+        if preset["capabilities_probe"] is not None:
+            await p.send(preset["capabilities_probe"])
         await p.send(bytes.fromhex("0603"))
-        await p.send(bytes.fromhex("0f20038869"))
-        await p.send(b"\x0f\x20\x04\x88\x00" + shared_token[:8])
-        await p.send(b"\x0f\x20\x04\x88\x01" + shared_token[8:])
-
-        print("Configuring bridge address...")
-        await p.send(b"\x06\x01\x88" + esp_mac_bytes)
-        await p.send(b"\x0f\x52\x02\x02\x10\xff\x05\x06" + bytes.fromhex("000809040507"))
+        await p.send(bytes([0x0F, 0x20, 0x03, slot, nonce]))
+        await p.send(bytes([0x0F, 0x20, 0x04, slot, 0x00]) + shared_token[:8])
+        await p.send(bytes([0x0F, 0x20, 0x04, slot, 0x01]) + shared_token[8:])
+        await p.send(bytes([0x06, 0x01, slot]) + esp_mac_bytes)
+        await p.send(bytes.fromhex("0f520202") + bytes([0x10, 0xFF, 0x05, 0x06]) + preset["finalize_tail"])
         await p.send(bytes.fromhex("0f530106"))
 
-    print("\nPairing complete. Press any key on the keypad to verify.")
+    print("Done. Press any key on the keypad to verify.")
 
 
 # ---------------------------------------------------------------------------

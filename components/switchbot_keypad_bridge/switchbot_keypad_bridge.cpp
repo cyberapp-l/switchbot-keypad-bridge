@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include <esp_mac.h>
 #include <esp_random.h>
 #include <psa/crypto.h>
 
@@ -20,14 +21,21 @@ constexpr const char *SERVICE_UUID = "cba20d00-224d-11e6-9fb8-0002a5d5c51b";
 constexpr const char *RX_CHAR_UUID = "cba20002-224d-11e6-9fb8-0002a5d5c51b";
 constexpr const char *TX_CHAR_UUID = "cba20003-224d-11e6-9fb8-0002a5d5c51b";
 
+// SwitchBot's OUI. Applied to the chip's factory MAC at boot so the bridge
+// advertises within SwitchBot's address range — the Keypad Vision filters
+// scan results on this prefix.
+constexpr uint8_t SPOOFED_OUI[3] = {0xB0, 0xE9, 0xFE};
+
 // Manufacturer-specific advertising blob published by the genuine lock.
 constexpr uint8_t ADVERTISING_MFG_DATA[] = {0x27, 0x09, 0x00, 0x10,
                                             0xA5, 0xB8, 0x00, 0x00, 0x00};
 
-// Plain-text command frames as decoded from the keypad.
-constexpr uint8_t FRAME_LOCK[8]       = {0x0F, 0x4E, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00};
-constexpr uint8_t FRAME_ACTION[4]     = {0x0F, 0x4E, 0x01, 0x03};
-constexpr uint8_t FRAME_STATE_POLL[4] = {0x0F, 0x4F, 0x81, 0x02};
+// Plain-text command frames as decoded from the keypad. The state-poll
+// constant is a 3-byte prefix because the trailing byte is a per-family
+// model suffix (varies between keypad models).
+constexpr uint8_t FRAME_LOCK[8]              = {0x0F, 0x4E, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00};
+constexpr uint8_t FRAME_ACTION[4]            = {0x0F, 0x4E, 0x01, 0x03};
+constexpr uint8_t FRAME_STATE_POLL_PREFIX[3] = {0x0F, 0x4F, 0x81};
 
 // Encrypted response payloads sent back to the keypad on lock/unlock.
 constexpr uint8_t RESPONSE_LOCK[5]   = {0x90, 0x0A, 0x7F, 0x7F, 0x00};
@@ -39,7 +47,6 @@ constexpr uint8_t STATE_PAYLOAD_TAIL[13] = {0x08, 0x08, 0x41, 0x00, 0x00, 0x00, 
 
 // Encrypted protocol framing.
 constexpr uint8_t  PROTOCOL_MAGIC      = 0x57;
-constexpr uint8_t  ENCRYPTED_KEY_ID    = 0x88;
 constexpr size_t   ENCRYPTED_HEADER    = 4;     // [0x57, key_id, seq_a, seq_b]
 constexpr size_t   MAX_PAYLOAD_LEN     = 32;
 constexpr size_t   MIN_PAYLOAD_LEN     = 4;
@@ -88,6 +95,8 @@ const char *unlock_method_name(UnlockMethod method) {
       return "fingerprint";
     case UnlockMethod::PIN:
       return "pin";
+    case UnlockMethod::FACE:
+      return "face";
     default:
       return "unknown";
   }
@@ -187,6 +196,25 @@ bool SwitchbotKeypadBridge::prepare_keys_() {
 }
 
 bool SwitchbotKeypadBridge::prepare_ble_() {
+  // Spoof a SwitchBot-OUI BLE address: keep the chip-unique tail, replace
+  // the leading three bytes. The Vision keypad filters scan results on this
+  // prefix and would otherwise ignore the bridge. Must run before NimBLE
+  // init so the controller picks up the patched base MAC.
+  uint8_t base[6];
+  esp_err_t err = esp_efuse_mac_get_default(base);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "esp_efuse_mac_get_default failed (err=0x%X)", err);
+    return false;
+  }
+  std::memcpy(base, SPOOFED_OUI, sizeof(SPOOFED_OUI));
+  err = esp_base_mac_addr_set(base);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "esp_base_mac_addr_set failed (err=0x%X)", err);
+    return false;
+  }
+  ESP_LOGD(TAG, "Base MAC set to %02X:%02X:%02X:%02X:%02X:%02X (SwitchBot OUI spoof)",
+           base[0], base[1], base[2], base[3], base[4], base[5]);
+
   NimBLEDevice::init("WoLock");
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
@@ -216,7 +244,15 @@ void SwitchbotKeypadBridge::on_rx_frame_(const std::string &frame) {
            format_hex_pretty(reinterpret_cast<const uint8_t *>(frame.data()), frame.size()).c_str());
 
   if (this->is_session_iv_request_(frame)) {
-    ESP_LOGD(TAG, "IV request: key_id=0x%02X", static_cast<uint8_t>(frame[7]));
+    // The IV request advertises which key_id the keypad will use for the
+    // rest of the session (`57 00 00 00 0F 21 03 <key_id>`). Adapt to it —
+    // Original/Touch uses 0x88, Vision/Vision Pro uses 0xC6.
+    const uint8_t requested_slot = static_cast<uint8_t>(frame[7]);
+    if (requested_slot != this->shared_slot_id_) {
+      ESP_LOGI(TAG, "Token slot: 0x%02X", requested_slot);
+      this->shared_slot_id_ = requested_slot;
+    }
+    ESP_LOGD(TAG, "IV request: key_id=0x%02X", requested_slot);
     this->send_session_iv_();
     return;
   }
@@ -230,7 +266,7 @@ void SwitchbotKeypadBridge::on_rx_frame_(const std::string &frame) {
   const FrameHeader header{static_cast<uint8_t>(frame[1]), static_cast<uint8_t>(frame[2]),
                            static_cast<uint8_t>(frame[3])};
 
-  if (header.key_id != ENCRYPTED_KEY_ID) {
+  if (header.key_id != this->shared_slot_id_) {
     ESP_LOGD(TAG, "Ignoring frame with unexpected key_id=0x%02X", header.key_id);
     return;
   }
@@ -311,24 +347,24 @@ bool SwitchbotKeypadBridge::decode_command_(const uint8_t *plaintext, size_t len
     out.type = CommandType::LOCK;
     return true;
   }
-  if (length == sizeof(FRAME_STATE_POLL) &&
-      std::memcmp(plaintext, FRAME_STATE_POLL, sizeof(FRAME_STATE_POLL)) == 0) {
+  if (length == 4 &&
+      std::memcmp(plaintext, FRAME_STATE_POLL_PREFIX, sizeof(FRAME_STATE_POLL_PREFIX)) == 0) {
     out.type = CommandType::STATE_POLL;
     return true;
   }
   if (length >= 8 && std::memcmp(plaintext, FRAME_ACTION, sizeof(FRAME_ACTION)) == 0 &&
       plaintext[UNLOCK_MARKER_OFFSET] == UNLOCK_MARKER) {
-    const uint8_t method_byte = plaintext[UNLOCK_METHOD_OFFSET];
-    if (method_byte != static_cast<uint8_t>(UnlockMethod::PIN) &&
-        method_byte != static_cast<uint8_t>(UnlockMethod::FINGERPRINT)) {
-      return false;
-    }
     out.type = CommandType::UNLOCK;
+    const uint8_t method_byte = plaintext[UNLOCK_METHOD_OFFSET];
     out.method = static_cast<UnlockMethod>(method_byte);
     const uint8_t idx_byte = plaintext[UNLOCK_INDEX_OFFSET];
+    // Original keypad: index encoded as 0x0A + zero-based slot. Vision: raw
+    // zero-based byte (we only have a single capture with 0x00, so this is
+    // a best-effort decode). Heuristic: if the byte ≥ 0x0A, treat as the
+    // original biased encoding; otherwise pass it through as the raw index.
     out.credential_index = (idx_byte >= UNLOCK_INDEX_BASE)
                                ? static_cast<int16_t>(idx_byte - UNLOCK_INDEX_BASE)
-                               : -1;
+                               : static_cast<int16_t>(idx_byte);
     return true;
   }
   return false;

@@ -10,7 +10,24 @@ The decoded commands are exposed two ways:
 | Surface | When to use |
 |---|---|
 | `event` entity (`keypad:`) | Standard ESPHome entity, surfaces in HA as `event.<device>_keypad` with `lock`/`unlock` event types. Zero-config, great for dashboards. |
-| ESPHome triggers (`on_lock` / `on_unlock`) | Drive every other action: HA events, service calls, local relays, notifications. The unlock trigger receives `method` (`pin`/`fingerprint`) and `index` (credential slot). |
+| ESPHome triggers (`on_lock` / `on_unlock`) | Drive every other action: HA events, service calls, local relays, notifications. The unlock trigger receives `method` (`pin` / `fingerprint` / `face` / `unknown`) and `index` (credential slot). |
+
+## Supported keypads
+
+The pairing tool auto-detects the keypad family from the credential the
+SwitchBot cloud returns and adapts the on-the-wire protocol accordingly.
+
+| Model | Status |
+|---|---|
+| SwitchBot Keypad Vision | **Tested** |
+| SwitchBot Keypad Vision Pro | Supported — same protocol family as Vision |
+| SwitchBot Keypad | Supported — protocol presets included |
+| SwitchBot Keypad Touch | Supported — protocol presets included |
+
+If your keypad is recognised by SwitchBot's cloud but rejected by the pairing
+tool with an "Unsupported keypad family" error, open an issue with the
+`key_id` printed in the message — adding a preset for a new family is a small
+change in `tools/pair_keypad.py`.
 
 ## Repository layout
 
@@ -101,10 +118,10 @@ The `on_unlock` trigger carries two pieces of information about every unlock eve
 
 | Parameter | Type | Values |
 |---|---|---|
-| `method` | `std::string` | `"pin"` or `"fingerprint"` |
-| `index` | `int` | Numeric ID of the credential, or `-1` if unknown |
+| `method` | `std::string` | `"pin"`, `"fingerprint"`, `"face"`, or `"unknown"` |
+| `index` | `int` | Numeric ID of the credential |
 
-**`index` is the slot number the SwitchBot app assigns automatically when you add a PIN or fingerprint** — the first credential you add gets index `0`, the second gets `1`, and so on. This lets you distinguish between users: if family members each have their own PIN or fingerprint, you can trigger different automations based on who is at the door.
+**`index` is the slot number the SwitchBot app assigns automatically when you add a PIN, fingerprint, or face** — the first credential you add gets index `0`, the second gets `1`, and so on. This lets you distinguish between users: if family members each have their own credential, you can trigger different automations based on who is at the door.
 
 Use `homeassistant.event` to forward both values to Home Assistant as event data, then build per-user automations entirely in HA without recompiling the firmware.
 
@@ -148,7 +165,7 @@ actions:
         (credential #{{ trigger.event.data.index }})
 ```
 
-`trigger.event.data.method` is `pin` or `fingerprint`; `trigger.event.data.index` is the slot number the SwitchBot app assigned when the credential was added.
+`trigger.event.data.method` is `pin`, `fingerprint`, `face`, or `unknown`; `trigger.event.data.index` is the slot number the SwitchBot app assigned when the credential was added.
 
 To react only to a specific credential, add a `conditions:` block. The following example sends a notification only when the first fingerprint (index `0`) is used:
 
@@ -193,13 +210,14 @@ never commit it to git.
   Python or C++ dependencies are required.
 - AES-CTR is symmetric: the same `aes_ctr_xcrypt_` primitive handles both
   encryption (responses) and decryption (incoming commands).
-- The bridge advertises on the ESP32's native public BLE address. Pair the
-  keypad against that address — either read it from `dump_config` at boot
-  (`BLE address: ...`) or, more conveniently, expose it to Home Assistant
-  via the optional `ble_mac:` diagnostic text sensor.
-- The BLE address is the Wi-Fi MAC plus 2 (ESP32 derives one MAC per
-  interface from the same base), so the value Home Assistant displays on
-  the device card is *not* the one the keypad sees.
+- At boot the bridge spoofs the chip's BLE address into SwitchBot's OUI
+  (`B0:E9:FE:xx:xx:xx`), preserving the chip-unique last three bytes so
+  every device still has a distinct identifier. The Keypad Vision filters
+  scan results on this prefix and would otherwise ignore the bridge.
+  Read the advertised address from the boot log (`Ready. Advertising on …`)
+  or from the optional `ble_mac:` diagnostic text sensor — that is the
+  value to pass to `pair_keypad.py`. It is *not* the Wi-Fi MAC Home
+  Assistant displays on the device card.
 - `FINAL_VALIDATE_SCHEMA` raises a hard error if `esp32_ble`,
   `esp32_ble_tracker`, `esp32_improv`, etc. are present in the config —
   NimBLE cannot coexist with ESPHome's BLE stack.

@@ -32,6 +32,7 @@ enum class UnlockMethod : uint8_t {
   UNKNOWN = 0x00,
   PIN = 0x04,
   FINGERPRINT = 0x0C,
+  FACE = 0x18,
 };
 
 const char *unlock_method_name(UnlockMethod method);
@@ -137,6 +138,11 @@ class SwitchbotKeypadBridge : public Component {
   // ----- User configuration --------------------------------------------------
 
   std::string shared_key_hex_;
+  // Token-slot key_id the keypad uses post-pairing. Auto-learned from the
+  // IV-request frame the keypad sends as the first message of every session
+  // (Original/Touch=0x88, Vision/Vision Pro=0xC6, …). 0x00 = not yet seen;
+  // no encrypted frame is accepted until the IV handshake has set it.
+  uint8_t shared_slot_id_{0x00};
 
   // ----- Runtime state -------------------------------------------------------
 
