@@ -1,64 +1,49 @@
-# switchbot-keypad-bridge
+# SwitchBot Keypad Bridge
 
-ESPHome external component that lets an ESP32 impersonate a **SwitchBot Lock**
-BLE peripheral so a SwitchBot Keypad can pair to it and deliver encrypted
-`lock` / `unlock` commands. The bridge decrypts the frames in-place and
-republishes them to Home Assistant — without requiring a real lock.
+> Use a **SwitchBot Keypad without a SwitchBot Lock** — pair it straight to an
+> ESP32 and turn every PIN, fingerprint, and face unlock into a Home Assistant event.
 
-The decoded commands are exposed two ways:
+<p align="center">
+  <img src="docs/pairing.gif" alt="Pairing a SwitchBot Keypad through the on-device wizard" width="320">
+</p>
 
-| Surface | When to use |
-|---|---|
-| `event` entity (`keypad:`) | Standard ESPHome entity, surfaces in HA as `event.<device>_keypad` with `lock`/`unlock` event types. Zero-config, great for dashboards. |
-| ESPHome triggers (`on_lock` / `on_unlock`) | Drive every other action: HA events, service calls, local relays, notifications. The unlock trigger receives `method` (`pin` / `fingerprint` / `face` / `unknown`) and `index` (credential slot). |
+An [ESPHome](https://esphome.io/) external component that makes an ESP32
+impersonate a **SwitchBot Lock** over Bluetooth LE. A genuine SwitchBot Keypad
+pairs to it and sends its usual encrypted `lock` / `unlock` frames — the bridge
+decrypts them on the fly and hands them to Home Assistant. The keypad never
+knows it isn't talking to a real lock.
+
+## Why use it
+
+- 🔓 **No SwitchBot Lock required** — repurpose a keypad as a standalone, fully
+  local door/access controller.
+- 📲 **On-device pairing wizard** — sign in to your SwitchBot account, pick the
+  keypad, done. No Python script, no laptop, no BLE sniffing.
+- 👤 **Knows who unlocked** — every unlock carries the method (`pin` /
+  `fingerprint` / `face`) and the credential slot, so you can act per user.
+- 🔐 **Keys never leave the device** — the AES-128 session key is generated on
+  the ESP32 and stored in NVS; it is never in your YAML or git.
+- 🧩 **Pure ESPHome** — exposes a standard `event` entity plus `on_lock` /
+  `on_unlock` automation triggers. No cloud, no extra dependencies.
 
 ## Supported keypads
 
-The pairing tool auto-detects the keypad family from the credential the
-SwitchBot cloud returns and adapts the on-the-wire protocol accordingly.
+The pairing wizard auto-detects the keypad family from the SwitchBot cloud and
+adapts the BLE protocol accordingly.
 
-| Model | Status |
-|---|---|
-| SwitchBot Keypad Vision | **Tested** |
-| SwitchBot Keypad Vision Pro | Supported — same protocol family as Vision |
-| SwitchBot Keypad | Supported — protocol presets included |
-| SwitchBot Keypad Touch | Supported — protocol presets included |
+| Model | Protocol family | Status |
+|---|---|---|
+| SwitchBot Keypad Touch | Original | ✅ **Tested** |
+| SwitchBot Keypad Vision | Vision | ✅ **Tested** |
+| SwitchBot Keypad | Original | Supported — same protocol as Touch |
+| SwitchBot Keypad Vision Pro | Vision | Supported — same protocol as Vision |
 
-If your keypad is recognised by SwitchBot's cloud but rejected by the pairing
-tool with an "Unsupported keypad family" error, open an issue with the
-`key_id` printed in the message — adding a preset for a new family is a small
-change in `tools/pair_keypad.py`.
+## Quick start
 
-## Repository layout
+**You need:** an ESP32 and a SwitchBot Keypad already added to your SwitchBot
+account.
 
-```
-.
-├── switchbot-keypad-bridge.yaml             # Device configuration
-├── secrets.example.yaml                     # Template for secrets.yaml
-├── tools/
-│   ├── generate_key.py                      # Generate a random shared key
-│   ├── pair_keypad.py                       # Pair the keypad with the bridge
-│   └── requirements.txt                     # Python dependencies for the tools
-└── components/switchbot_keypad_bridge/      # The external component
-    ├── __init__.py                          # ESPHome codegen / schema
-    ├── automation.h                         # on_lock / on_unlock triggers
-    ├── switchbot_keypad_bridge.h
-    └── switchbot_keypad_bridge.cpp
-```
-
-## Setup
-
-**Prerequisites:** Python 3.10+, a Bluetooth adapter, and the keypad already added to your SwitchBot account.
-
-### 1. Generate a shared key
-
-```bash
-python tools/generate_key.py
-```
-
-Copy the printed 32-character value — you will need it in the next two steps.
-
-### 2. Create `secrets.yaml`
+### 1. Create `secrets.yaml`
 
 Copy `secrets.example.yaml` to `secrets.yaml` and fill in your details:
 
@@ -66,70 +51,60 @@ Copy `secrets.example.yaml` to `secrets.yaml` and fill in your details:
 wifi_ssid: "your_network_name"
 wifi_password: "your_wifi_password"
 ota_password: "a_strong_ota_password"
-switchbot_shared_key: "PASTE_KEY_FROM_STEP_1_HERE"
 ```
 
-### 3. Flash the ESP32
+### 2. Flash the ESP32
 
 ```bash
 pip install esphome
 esphome run switchbot-keypad-bridge.yaml
 ```
 
-After the device boots, note the BLE address printed in the log:
+### 3. Pair the keypad
 
-```
-[C][switchbot_keypad_bridge]: BLE address: XX:XX:XX:XX:XX:XX
-```
+On first boot — with no keypad paired — the device opens its **pairing wizard**
+automatically. Open it in a browser at `http://<device-ip>/` (the IP is in the
+boot log, or use Home Assistant's **Visit Device** link on the device page):
 
-It is also exposed as the **BLE MAC** sensor on the Home Assistant device page.
+1. Sign in with your SwitchBot account.
+2. Pick your keypad from the list.
+3. Wait for the wizard to finish — it closes itself when done.
 
-### 4. Install the pairing tool
+That's it. The keypad's name appears on the **Keypad** sensor and key presses
+arrive in Home Assistant as `Lock` / `Unlock` events.
 
-```bash
-pip install -r tools/requirements.txt
-```
+> **Re-pairing** — to switch to a different keypad, press the **Unpair** button
+> in Home Assistant. The device forgets the current keypad, rotates its session
+> key, and re-opens the pairing wizard right away — no reboot.
 
-### 5. Pair the keypad
-
-```bash
-python tools/pair_keypad.py KEYPAD_MAC ESP_MAC SHARED_KEY --user your@email.com
-```
-
-| Argument | Where to find it |
-|---|---|
-| `KEYPAD_MAC` | SwitchBot app → open the keypad device → ... → **Device Info** → **BLE Address** |
-| `ESP_MAC` | The BLE address from step 3 (log or Home Assistant) |
-| `SHARED_KEY` | The key generated in step 1 |
-
-You will be prompted for your SwitchBot account password. When the script finishes, the keypad LED turns green — press any key to confirm commands arrive in Home Assistant.
-
-### Stream logs
+To stream logs at any time:
 
 ```bash
 esphome logs switchbot-keypad-bridge.yaml
 ```
 
-## Wiring up automations
+## Knowing who unlocked the door
 
-### Who unlocked the door?
-
-The `on_unlock` trigger carries two pieces of information about every unlock event:
+Every `on_unlock` trigger carries two values:
 
 | Parameter | Type | Values |
 |---|---|---|
 | `method` | `std::string` | `"pin"`, `"fingerprint"`, `"face"`, or `"unknown"` |
-| `index` | `int` | Numeric ID of the credential |
+| `index` | `int` | Numeric ID of the credential slot |
 
-**`index` is the slot number the SwitchBot app assigns automatically when you add a PIN, fingerprint, or face** — the first credential you add gets index `0`, the second gets `1`, and so on. This lets you distinguish between users: if family members each have their own credential, you can trigger different automations based on who is at the door.
+**`index` is the slot the SwitchBot app assigns automatically when you add a
+PIN, fingerprint, or face** — the first credential gets index `0`, the second
+`1`, and so on. Combined with `method`, it tells you exactly which family member
+is at the door.
 
-Use `homeassistant.event` to forward both values to Home Assistant as event data, then build per-user automations entirely in HA without recompiling the firmware.
+The cleanest pattern is to forward both values to Home Assistant as a custom
+event with `homeassistant.event`, then build per-user automations entirely in HA
+without recompiling the firmware:
 
 ```yaml
 switchbot_keypad_bridge:
-  shared_key: !secret switchbot_shared_key
-  keypad:
-    name: "Keypad"
+  keypad_action:
+    name: "Action"
 
   on_unlock:
     # Forward method and index to Home Assistant as a custom event.
@@ -139,7 +114,7 @@ switchbot_keypad_bridge:
           method: !lambda 'return method;'
           index: !lambda 'return to_string(index);'
 
-    # Or react directly on the ESP32 — e.g. different action per user.
+    # Or react directly on the ESP32 — e.g. a different action per user.
     - if:
         condition:
           lambda: 'return method == "fingerprint" && index == 0;'
@@ -150,7 +125,8 @@ switchbot_keypad_bridge:
     - logger.log: "Locked"
 ```
 
-On the Home Assistant side, create an automation (**Settings → Automations → New automation → ... → Edit in YAML**) and paste:
+On the Home Assistant side, create an automation (**Settings → Automations → New
+automation → ⋮ → Edit in YAML**) and paste:
 
 ```yaml
 alias: Notify on keypad unlock
@@ -165,9 +141,8 @@ actions:
         (credential #{{ trigger.event.data.index }})
 ```
 
-`trigger.event.data.method` is `pin`, `fingerprint`, `face`, or `unknown`; `trigger.event.data.index` is the slot number the SwitchBot app assigned when the credential was added.
-
-To react only to a specific credential, add a `conditions:` block. The following example sends a notification only when the first fingerprint (index `0`) is used:
+To react only to a specific credential, add a `conditions:` block. This example
+fires only for the first fingerprint (index `0`):
 
 ```yaml
 alias: Welcome home — owner fingerprint
@@ -185,39 +160,42 @@ actions:
       message: Welcome home!
 ```
 
-Create one automation per credential to send tailored notifications or trigger different actions for each family member.
+Create one automation per credential to send tailored notifications or trigger
+different actions for each family member.
 
 ## Configuration reference
 
-| Option         | Type        | Required | Description |
-|----------------|-------------|----------|-------------|
-| `shared_key`   | string      | yes      | 32-character hex AES-128 session key. |
-| `keypad`       | event       | no       | Configures the standard ESPHome `event` entity. |
-| `ble_mac`      | text_sensor | no       | Diagnostic text sensor with the BLE peripheral address (the MAC the keypad must pair against). |
-| `on_lock`      | auto        | no       | Triggered on every `lock` command. |
-| `on_unlock`    | auto        | no       | Triggered on every `unlock` command, parameters `(std::string method, int index)`. |
+| Option | Type | Required | Description |
+|---|---|---|---|
+| `keypad_action` | event | no | Standard ESPHome `event` entity for keypad actions. Surfaces in HA as `event.<device>_action` with `Lock` / `Unlock` event types. |
+| `keypad` | text_sensor | no | Text sensor whose state is the display name of the paired keypad (Configuration category; empty if none). |
+| `pairing_ui` | boolean | no | Compiles in the on-device pairing wizard. Default `false`. The wizard opens automatically at boot while no keypad is paired. |
+| `unpair_button` | button | no | Button that forgets the paired keypad, rotates the session key and re-opens the pairing wizard (no reboot). Requires `pairing_ui: true`. |
+| `on_lock` | automation | no | Triggered on every `lock` command. |
+| `on_unlock` | automation | no | Triggered on every `unlock` command — parameters `(std::string method, int index)`. |
 
-## Security
+## How it works
 
-`shared_key` is the symmetric AES-128 secret your physical SwitchBot setup
-already trusts. Treat it like a password — keep it in `secrets.yaml`,
-never commit it to git.
+### Security
 
-## Implementation notes
+The AES-128 session key is generated on the device on first boot, kept in NVS,
+and injected into the keypad during pairing. It is never part of the YAML
+configuration and never leaves the device. The **Unpair** button rotates it, so
+a keypad paired before an unpair can no longer command the bridge afterwards.
 
-- The component uses NimBLE (via the `esp-nimble-cpp` managed component) and
-  the mbed-TLS PSA Crypto API that already ships with ESP-IDF. No additional
-  Python or C++ dependencies are required.
+### Implementation notes
+
+- The component uses NimBLE (via the `esp-nimble-cpp` managed component) and the
+  mbed-TLS PSA Crypto API that already ships with ESP-IDF. No additional Python
+  or C++ dependencies are required.
 - AES-CTR is symmetric: the same `aes_ctr_xcrypt_` primitive handles both
   encryption (responses) and decryption (incoming commands).
 - At boot the bridge spoofs the chip's BLE address into SwitchBot's OUI
-  (`B0:E9:FE:xx:xx:xx`), preserving the chip-unique last three bytes so
-  every device still has a distinct identifier. The Keypad Vision filters
-  scan results on this prefix and would otherwise ignore the bridge.
-  Read the advertised address from the boot log (`Ready. Advertising on …`)
-  or from the optional `ble_mac:` diagnostic text sensor — that is the
-  value to pass to `pair_keypad.py`. It is *not* the Wi-Fi MAC Home
-  Assistant displays on the device card.
+  (`B0:E9:FE:xx:xx:xx`), preserving the chip-unique last three bytes so every
+  device still has a distinct identifier. The Keypad Vision filters scan results
+  on this prefix and would otherwise ignore the bridge. Read the advertised
+  address from the boot log (`Ready. Advertising on …`) — it is *not* the Wi-Fi
+  MAC Home Assistant displays on the device card.
 - `FINAL_VALIDATE_SCHEMA` raises a hard error if `esp32_ble`,
-  `esp32_ble_tracker`, `esp32_improv`, etc. are present in the config —
-  NimBLE cannot coexist with ESPHome's BLE stack.
+  `esp32_ble_tracker`, `esp32_improv`, etc. are present in the config — NimBLE
+  cannot coexist with ESPHome's BLE stack.
