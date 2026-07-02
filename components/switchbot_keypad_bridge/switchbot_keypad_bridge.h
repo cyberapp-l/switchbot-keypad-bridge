@@ -92,7 +92,16 @@ class SwitchbotKeypadBridge : public Component {
   // window. 0 disables the throttle (every unlock fires an event).
   void set_min_unlock_interval(uint32_t ms) { this->min_unlock_interval_ms_ = ms; }
 
-  bool is_pairing_active() const { return this->pairing_ui_.is_running(); }
+  // HTTP Basic Auth for the always-on web console. An empty password leaves
+  // the server open (original behaviour); set one to require a login.
+  void set_web_credentials(const std::string &user, const std::string &pass) {
+    this->web_user_ = user;
+    this->web_pass_ = pass;
+  }
+
+  // "A pairing is mid-flight" — used by the Unpair button to refuse while a
+  // job runs. Not "is the server up" (it always is now).
+  bool is_pairing_active() const { return this->pairing_ui_.is_pairing_busy(); }
 
   // Forgets the paired keypad, rotates the shared key in place and
   // re-opens the pairing wizard — no reboot. Invoked by UnpairButton.
@@ -243,6 +252,10 @@ class SwitchbotKeypadBridge : public Component {
   uint32_t last_unlock_ms_{0};
   UnlockMethod last_unlock_method_{UnlockMethod::UNKNOWN};
   int last_unlock_index_{-2};  // -2 = nothing seen yet (distinct from a real -1)
+
+  // HTTP Basic Auth credentials for the web console (empty pass = open).
+  std::string web_user_{"admin"};
+  std::string web_pass_{};
 
   // ----- User configuration --------------------------------------------------
 

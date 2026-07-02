@@ -17,6 +17,7 @@
 #include <esp_http_server.h>
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -62,7 +63,32 @@ class PairingUi {
 
   bool is_running() const { return this->server_ != nullptr; }
 
+  // Optional HTTP Basic Auth for the whole server. When a password is set,
+  // every endpoint (including the UI page) requires it. Empty password (the
+  // default) leaves the server open, preserving the original behaviour.
+  void set_credentials(const std::string &user, const std::string &pass) {
+    this->auth_user_ = user;
+    this->auth_pass_ = pass;
+  }
+
+  // True while a blocking BLE scan started by the pairing flow is in progress.
+  // The component's battery scan checks this to avoid fighting over the shared
+  // NimBLE scan singleton now that the server stays up permanently.
+  bool is_ble_scan_busy() const { return this->ble_scan_busy_.load(std::memory_order_relaxed); }
+
+  // True while a pairing operation is actually under way — either listing
+  // keypads (BLE scan) or running the pairing job. Distinct from is_running():
+  // the server itself is now always up, so this is what the Unpair guard uses.
+  bool is_pairing_busy() const {
+    return this->ble_scan_busy_.load(std::memory_order_relaxed) ||
+           this->pairer_.status().state == KeypadPairer::State::RUNNING;
+  }
+
  private:
+  // Returns true if the request may proceed. When auth is configured and the
+  // request lacks valid Basic credentials, it sends a 401 challenge and
+  // returns false — the caller must then return ESP_OK immediately.
+  static bool require_auth_(httpd_req_t *req);
   // URI handler trampolines — esp_http_server takes a C function, so the
   // handlers are static and forward to the instance stored in
   // req->user_ctx (set to `this` at registration time).
@@ -81,6 +107,9 @@ class PairingUi {
   httpd_handle_t server_{nullptr};
   CloudClient    cloud_{};
   KeypadPairer   pairer_{};
+  std::string    auth_user_{"admin"};
+  std::string    auth_pass_{};  // empty = no auth
+  std::atomic<bool> ble_scan_busy_{false};
   std::array<uint8_t, 16> shared_key_{};
   const uint8_t *html_{nullptr};
   size_t         html_len_{0};

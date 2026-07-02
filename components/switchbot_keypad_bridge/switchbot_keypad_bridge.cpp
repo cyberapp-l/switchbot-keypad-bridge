@@ -169,25 +169,27 @@ void SwitchbotKeypadBridge::setup() {
            NimBLEDevice::getAddress().toString().c_str());
 
   this->pairing_ui_.set_shared_key(this->shared_key_);
+  this->pairing_ui_.set_credentials(this->web_user_, this->web_pass_);
   this->pairing_ui_.set_on_paired_callback(
       [this](const std::string &name, const std::string &mac,
              KeypadFamily family) {
         // Runs on the HTTP-server task — keep it minimal: stash the fields and
-        // raise a flag. loop() (the main task) publishes the text sensor,
-        // writes NVS and stops the server.
+        // raise a flag. loop() (the main task) publishes the text sensor and
+        // writes NVS. The server stays up as the config console.
         this->pending_keypad_name_ = name;
         this->pending_keypad_mac_ = mac;
         this->pending_keypad_family_ = family;
         this->pending_pair_apply_.store(true, std::memory_order_release);
       });
-  // Pairing mode: with no keypad paired yet, open the wizard right away
-  // so the very first pairing needs no button press.
-  if (!have_keypad) {
-    if (this->pairing_ui_.start()) {
-      ESP_LOGI(TAG, "No keypad paired — starting pairing mode");
-    } else {
-      ESP_LOGW(TAG, "Pairing UI failed to start; check port 80 is free");
-    }
+  // The web server now runs permanently: it is both the first-boot pairing
+  // wizard and the ongoing config console. When a web_password is set every
+  // endpoint is behind HTTP Basic Auth; otherwise it stays open as before.
+  if (this->pairing_ui_.start()) {
+    ESP_LOGI(TAG, "Web UI listening on port 80%s",
+             this->web_pass_.empty() ? " (open — set web_password to require a login)"
+                                      : " (Basic Auth enabled)");
+  } else {
+    ESP_LOGW(TAG, "Web UI failed to start; check port 80 is free");
   }
 }
 
@@ -223,13 +225,8 @@ void SwitchbotKeypadBridge::loop() {
     ESP_LOGI(TAG, "Paired keypad: '%s' (nvs save %s)", name.c_str(),
              saved ? "ok" : "FAILED");
 
-    // Pairing done — close the wizard server. Defer ~2 s so the wizard's
-    // final status poll still gets its reply. set_timeout() is safe here:
-    // loop() runs on the main task.
-    this->set_timeout(2000, [this]() {
-      this->pairing_ui_.stop();
-      ESP_LOGI(TAG, "Pairing UI stopped");
-    });
+    // The web server stays up after pairing — it is the ongoing config console
+    // now, not just the one-shot wizard. (Previously it was stopped here.)
   }
 
   // Drain the RX queue. Swapping the vector out keeps the critical section
@@ -618,8 +615,9 @@ void SwitchbotKeypadBridge::maybe_start_battery_scan_() {
 
   // The scan singleton is shared with the pairing flows (which run blocking
   // scans), and the keypad does not advertise while it holds a connection to
-  // us — defer rather than fight either.
-  if (!this->keypad_paired_ || this->pairing_ui_.is_running() ||
+  // us — defer rather than fight either. The server now runs permanently, so
+  // gate on an *active* pairing scan rather than merely "server up".
+  if (!this->keypad_paired_ || this->pairing_ui_.is_ble_scan_busy() ||
       (this->server_ != nullptr && this->server_->getConnectedCount() > 0) ||
       NimBLEDevice::getScan()->isScanning()) {
     this->next_battery_scan_at_ = now + BATTERY_SCAN_RETRY_MS;

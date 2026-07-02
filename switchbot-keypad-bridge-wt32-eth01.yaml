@@ -89,6 +89,11 @@ switchbot_keypad_bridge:
   # Drop duplicate unlocks from the same credential within this window.
   min_unlock_interval: 3s
 
+  # Protect the always-on web console (pairing wizard + config) with a login.
+  # Omit web_password to leave it open on the LAN. Username defaults to "admin".
+  # web_username: "admin"
+  # web_password: !secret web_password
+
   # users:
   #   - name: "Liran"
   #     method: fingerprint

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <cJSON.h>
+#include <mbedtls/base64.h>
 
 #include "esphome/core/log.h"
 #include "ble_utils.h"
@@ -71,9 +72,70 @@ void PairingUi::stop() {
   }
 }
 
+// ── Authentication ──────────────────────────────────────────────────────────
+
+bool PairingUi::require_auth_(httpd_req_t *req) {
+  auto *self = static_cast<PairingUi *>(req->user_ctx);
+  if (self == nullptr || self->auth_pass_.empty()) {
+    return true;  // auth disabled — original open behaviour
+  }
+
+  auto challenge = [req]() -> void {
+    httpd_resp_set_status(req, "401 Unauthorized");
+    httpd_resp_set_hdr(req, "WWW-Authenticate",
+                       "Basic realm=\"SwitchBot Keypad Bridge\", charset=\"UTF-8\"");
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req, "Authentication required", HTTPD_RESP_USE_STRLEN);
+  };
+
+  const size_t hdr_len = httpd_req_get_hdr_value_len(req, "Authorization");
+  if (hdr_len == 0 || hdr_len > 512) {
+    challenge();
+    return false;
+  }
+  std::vector<char> hdr_buf(hdr_len + 1);
+  if (httpd_req_get_hdr_value_str(req, "Authorization", hdr_buf.data(), hdr_buf.size()) != ESP_OK) {
+    challenge();
+    return false;
+  }
+  const std::string hdr(hdr_buf.data(), hdr_len);
+
+  const char *const prefix = "Basic ";
+  if (hdr.rfind(prefix, 0) != 0) {  // must start with "Basic "
+    challenge();
+    return false;
+  }
+  const std::string b64 = hdr.substr(std::strlen(prefix));
+
+  unsigned char decoded[400];
+  size_t out_len = 0;
+  if (mbedtls_base64_decode(decoded, sizeof(decoded), &out_len,
+                            reinterpret_cast<const unsigned char *>(b64.data()),
+                            b64.size()) != 0) {
+    challenge();
+    return false;
+  }
+  const std::string creds(reinterpret_cast<const char *>(decoded), out_len);
+  const std::string expected = self->auth_user_ + ":" + self->auth_pass_;
+
+  // Length-independent compare to avoid leaking the password length via timing.
+  unsigned char diff = static_cast<unsigned char>(creds.size() ^ expected.size());
+  for (size_t i = 0; i < expected.size(); ++i) {
+    const unsigned char c = i < creds.size() ? static_cast<unsigned char>(creds[i]) : 0;
+    diff |= c ^ static_cast<unsigned char>(expected[i]);
+  }
+  if (diff != 0) {
+    ESP_LOGW(TAG, "Rejected request with bad credentials");
+    challenge();
+    return false;
+  }
+  return true;
+}
+
 // ── URI handlers ──────────────────────────────────────────────────────────
 
 esp_err_t PairingUi::handle_root_(httpd_req_t *req) {
+  if (!require_auth_(req)) return ESP_OK;
   auto *self = static_cast<PairingUi *>(req->user_ctx);
   if (self->html_ == nullptr || self->html_len_ == 0) {
     return reply_error_(req, "500 Internal Server Error",
@@ -161,6 +223,7 @@ std::map<std::string, NearbyDevice> scan_nearby(uint32_t duration_ms) {
 }  // namespace
 
 esp_err_t PairingUi::handle_login_(httpd_req_t *req) {
+  if (!require_auth_(req)) return ESP_OK;
   auto *self = static_cast<PairingUi *>(req->user_ctx);
   std::string body = read_body_(req);
   std::string email    = extract_json_str(body, "email");
@@ -181,6 +244,7 @@ esp_err_t PairingUi::handle_login_(httpd_req_t *req) {
 }
 
 esp_err_t PairingUi::handle_keypads_(httpd_req_t *req) {
+  if (!require_auth_(req)) return ESP_OK;
   auto *self = static_cast<PairingUi *>(req->user_ctx);
   if (!self->cloud_.is_logged_in()) {
     return reply_error_(req, "401 Unauthorized", "Sign in first.");
@@ -198,7 +262,11 @@ esp_err_t PairingUi::handle_keypads_(httpd_req_t *req) {
   // 8 s: keypads are battery devices that advertise infrequently when idle, and
   // the radio is time-shared with WiFi and the lock advertising — a short window
   // often catches only one of several keypads. A longer scan reliably finds all.
+  // Flag the blocking scan so the component's battery scan (which now runs while
+  // this server is permanently up) doesn't fight over the NimBLE scan singleton.
+  self->ble_scan_busy_.store(true, std::memory_order_relaxed);
   const std::map<std::string, NearbyDevice> nearby = scan_nearby(8000);
+  self->ble_scan_busy_.store(false, std::memory_order_relaxed);
 
   cJSON *arr = cJSON_CreateArray();
   unsigned shown = 0;
@@ -245,6 +313,7 @@ esp_err_t PairingUi::handle_keypads_(httpd_req_t *req) {
 }
 
 esp_err_t PairingUi::handle_pair_(httpd_req_t *req) {
+  if (!require_auth_(req)) return ESP_OK;
   auto *self = static_cast<PairingUi *>(req->user_ctx);
   std::string body = read_body_(req);
   std::string mac  = extract_json_str(body, "mac");
@@ -324,6 +393,7 @@ esp_err_t PairingUi::handle_pair_(httpd_req_t *req) {
 }
 
 esp_err_t PairingUi::handle_pair_status_(httpd_req_t *req) {
+  if (!require_auth_(req)) return ESP_OK;
   auto *self = static_cast<PairingUi *>(req->user_ctx);
   KeypadPairer::Status st = self->pairer_.status();
 

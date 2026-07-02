@@ -69,6 +69,10 @@ CONF_METHOD = "method"
 CONF_INDEX = "index"
 CONF_MIN_UNLOCK_INTERVAL = "min_unlock_interval"
 
+# HTTP Basic Auth for the always-on web console.
+CONF_WEB_USERNAME = "web_username"
+CONF_WEB_PASSWORD = "web_password"
+
 # UnlockMethod bytes as the keypad reports them (see lock_protocol.h). 0xFF is
 # the "any method" wildcard used by the users mapping.
 _UNLOCK_METHOD_BYTES = {
@@ -183,6 +187,10 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_MIN_UNLOCK_INTERVAL, default="0s"
         ): cv.positive_time_period_milliseconds,
+        # HTTP Basic Auth for the always-on web console. Omit web_password to
+        # leave it open (original behaviour).
+        cv.Optional(CONF_WEB_USERNAME, default="admin"): cv.string_strict,
+        cv.Optional(CONF_WEB_PASSWORD): cv.string_strict,
         cv.Optional(CONF_PAIRING_UI): _deprecated_pairing_ui,
         cv.Optional(CONF_UNPAIR_BUTTON): button.button_schema(
             UnpairButton,
@@ -301,6 +309,12 @@ async def to_code(config):
         )
 
     cg.add(var.set_min_unlock_interval(config[CONF_MIN_UNLOCK_INTERVAL].total_milliseconds))
+
+    cg.add(
+        var.set_web_credentials(
+            config[CONF_WEB_USERNAME], config.get(CONF_WEB_PASSWORD, "")
+        )
+    )
 
     # Make Home Assistant show the "Visit Device" link on the device page.
     # ESPHome's api component fills `webserver_port` in DeviceInfoResponse
