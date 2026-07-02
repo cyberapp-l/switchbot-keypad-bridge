@@ -49,13 +49,46 @@ switchbot_keypad_bridge:
   unpair_button:
     name: "Unpair"
 
+  # "Who unlocked" diagnostics. last_user resolves the credential to a name
+  # from the `users:` map below (falls back to "<method> #<index>").
+  last_user:
+    name: "Last User"
+  last_method:
+    name: "Last Method"
+
+  # Optional per-method running counters (reset on reboot).
+  unlock_counts:
+    pin:
+      name: "PIN Unlocks"
+    fingerprint:
+      name: "Fingerprint Unlocks"
+    face:
+      name: "Face Unlocks"
+    # nfc:
+    #   name: "NFC Unlocks"
+
+  # Drop duplicate unlocks from the same credential within this window.
+  min_unlock_interval: 3s
+
+  # Map credential slots to names. `method` defaults to "any", `index` to -1
+  # (any slot of that method). Add your own:
+  # users:
+  #   - name: "Liran"
+  #     method: fingerprint
+  #     index: 0
+  #   - name: "Family PIN"
+  #     method: pin
+  #     index: 1
+
   on_unlock:
-    # method: "pin" | "fingerprint" | "nfc" | "face" | "unknown"   index: credential slot
+    # method: "pin" | "fingerprint" | "nfc" | "face" | "unknown"
+    # index:  credential slot         name: resolved user (from users:, may be empty)
     - homeassistant.event:
         event: esphome.switchbot_keypad_unlock
         data:
           method: !lambda 'return method;'
           index: !lambda 'return to_string(index);'
+          name: !lambda 'return name;'
   
   # on_lock:
   #   - logger.log: "Locked"

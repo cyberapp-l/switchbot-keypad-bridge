@@ -70,6 +70,28 @@ class SwitchbotKeypadBridge : public Component {
   }
   void set_battery_scan_interval(uint32_t ms) { this->battery_scan_interval_ms_ = ms; }
 
+  // ----- Credential labelling ("who unlocked") -------------------------------
+
+  // Optional diagnostic entities describing the most recent unlock: the
+  // resolved user name and the method used.
+  void set_last_user_text_sensor(text_sensor::TextSensor *s) { this->last_user_sensor_ = s; }
+  void set_last_method_text_sensor(text_sensor::TextSensor *s) { this->last_method_sensor_ = s; }
+
+  // Per-method running unlock counters (since boot). Any subset may be wired.
+  // `method` is the UnlockMethod byte (as sent by the keypad).
+  void set_unlock_count_sensor(uint8_t method, sensor::Sensor *s);
+
+  // Register a (method, index) -> display name mapping from YAML. `method`
+  // is the UnlockMethod byte, or 0xFF to match any method; `index` is the
+  // credential slot, or -1 to match any slot of that method.
+  void add_user(uint8_t method, int index, const std::string &name) {
+    this->users_.push_back({method, static_cast<int16_t>(index), name});
+  }
+
+  // Debounce repeated unlocks from the same credential arriving within this
+  // window. 0 disables the throttle (every unlock fires an event).
+  void set_min_unlock_interval(uint32_t ms) { this->min_unlock_interval_ms_ = ms; }
+
   bool is_pairing_active() const { return this->pairing_ui_.is_running(); }
 
   // Forgets the paired keypad, rotates the shared key in place and
@@ -79,7 +101,7 @@ class SwitchbotKeypadBridge : public Component {
   void add_on_lock_callback(std::function<void()> &&callback) {
     this->on_lock_callbacks_.add(std::move(callback));
   }
-  void add_on_unlock_callback(std::function<void(std::string, int)> &&callback) {
+  void add_on_unlock_callback(std::function<void(std::string, int, std::string)> &&callback) {
     this->on_unlock_callbacks_.add(std::move(callback));
   }
   void add_on_doorbell_callback(std::function<void()> &&callback) {
@@ -142,6 +164,9 @@ class SwitchbotKeypadBridge : public Component {
   void publish_unlock_(UnlockMethod method, int index);
   void publish_doorbell_();
 
+  // Resolve a credential to its configured display name, or "" if unmapped.
+  std::string lookup_user_(UnlockMethod method, int index) const;
+
   // ----- Keypad battery (advertisement scan) ----------------------------------
 
   // The keypad broadcasts its battery level in its BLE advertisement (the
@@ -189,8 +214,35 @@ class SwitchbotKeypadBridge : public Component {
 
   event::Event *keypad_event_{nullptr};
   CallbackManager<void()> on_lock_callbacks_{};
-  CallbackManager<void(std::string, int)> on_unlock_callbacks_{};
+  CallbackManager<void(std::string, int, std::string)> on_unlock_callbacks_{};
   CallbackManager<void()> on_doorbell_callbacks_{};
+
+  // ----- Credential labelling / unlock stats ---------------------------------
+
+  // (method, index) -> display name mappings from YAML. `method == 0xFF`
+  // matches any method; `index < 0` matches any slot of that method.
+  struct UserEntry {
+    uint8_t method;
+    int16_t index;
+    std::string name;
+  };
+  std::vector<UserEntry> users_{};
+
+  text_sensor::TextSensor *last_user_sensor_{nullptr};
+  text_sensor::TextSensor *last_method_sensor_{nullptr};
+
+  // Per-method unlock counters (since boot) and their optional sensors, keyed
+  // by a small dense index (see method_slot_()).
+  static constexpr size_t METHOD_SLOTS = 5;  // pin, nfc, fingerprint, face, unknown
+  sensor::Sensor *unlock_count_sensors_[METHOD_SLOTS]{};
+  uint32_t unlock_counts_[METHOD_SLOTS]{};
+  static size_t method_slot_(UnlockMethod method);
+
+  // Same-credential unlock debounce.
+  uint32_t min_unlock_interval_ms_{0};
+  uint32_t last_unlock_ms_{0};
+  UnlockMethod last_unlock_method_{UnlockMethod::UNKNOWN};
+  int last_unlock_index_{-2};  // -2 = nothing seen yet (distinct from a real -1)
 
   // ----- User configuration --------------------------------------------------
 

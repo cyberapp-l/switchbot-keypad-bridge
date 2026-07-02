@@ -33,11 +33,13 @@ from esphome.components.esp32 import (
 from esphome.const import (
     CONF_BATTERY_LEVEL,
     CONF_ID,
+    CONF_NAME,
     CONF_TRIGGER_ID,
     DEVICE_CLASS_BATTERY,
     ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
     STATE_CLASS_MEASUREMENT,
+    STATE_CLASS_TOTAL_INCREASING,
     UNIT_PERCENT,
 )
 from esphome.core import CORE, HexInt
@@ -58,6 +60,28 @@ CONF_ON_UNLOCK = "on_unlock"
 CONF_ON_DOORBELL = "on_doorbell"
 CONF_PAIRING_UI = "pairing_ui"
 
+# Credential labelling / unlock statistics.
+CONF_LAST_USER = "last_user"
+CONF_LAST_METHOD = "last_method"
+CONF_UNLOCK_COUNTS = "unlock_counts"
+CONF_USERS = "users"
+CONF_METHOD = "method"
+CONF_INDEX = "index"
+CONF_MIN_UNLOCK_INTERVAL = "min_unlock_interval"
+
+# UnlockMethod bytes as the keypad reports them (see lock_protocol.h). 0xFF is
+# the "any method" wildcard used by the users mapping.
+_UNLOCK_METHOD_BYTES = {
+    "pin": 0x04,
+    "nfc": 0x08,
+    "fingerprint": 0x0C,
+    "face": 0x18,
+    "unknown": 0x00,
+}
+_USER_METHOD_BYTES = {"any": 0xFF, **_UNLOCK_METHOD_BYTES}
+# Methods that get their own optional running-count sensor.
+_COUNT_METHODS = ["pin", "nfc", "fingerprint", "face"]
+
 # Auto-generated id for the progmem array that carries the embedded UI.
 CONF_PAIRING_UI_HTML_ID = "pairing_ui_html_id"
 
@@ -75,7 +99,7 @@ LockTrigger = switchbot_keypad_bridge_ns.class_(
     "LockTrigger", automation.Trigger.template()
 )
 UnlockTrigger = switchbot_keypad_bridge_ns.class_(
-    "UnlockTrigger", automation.Trigger.template(cg.std_string, cg.int_)
+    "UnlockTrigger", automation.Trigger.template(cg.std_string, cg.int_, cg.std_string)
 )
 DoorbellTrigger = switchbot_keypad_bridge_ns.class_(
     "DoorbellTrigger", automation.Trigger.template()
@@ -118,6 +142,46 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         cv.Optional(
             CONF_BATTERY_SCAN_INTERVAL, default="15min"
+        ): cv.positive_time_period_milliseconds,
+        # Display name of the credential behind the most recent unlock, resolved
+        # through the `users` mapping (falls back to "<method> #<index>").
+        cv.Optional(CONF_LAST_USER): text_sensor.text_sensor_schema(
+            icon="mdi:account-check",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        # Method of the most recent unlock (pin / fingerprint / nfc / face).
+        cv.Optional(CONF_LAST_METHOD): text_sensor.text_sensor_schema(
+            icon="mdi:gesture-tap-button",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        # Optional per-method running unlock counters (reset on reboot).
+        cv.Optional(CONF_UNLOCK_COUNTS): cv.Schema(
+            {
+                cv.Optional(m): sensor.sensor_schema(
+                    state_class=STATE_CLASS_TOTAL_INCREASING,
+                    entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+                    accuracy_decimals=0,
+                    icon="mdi:counter",
+                )
+                for m in _COUNT_METHODS
+            }
+        ),
+        # Map credential slots to human names. `method` defaults to "any" and
+        # `index` to -1 (any slot), so a bare name can catch a whole method.
+        cv.Optional(CONF_USERS): cv.ensure_list(
+            cv.Schema(
+                {
+                    cv.Required(CONF_NAME): cv.string_strict,
+                    cv.Optional(CONF_METHOD, default="any"): cv.one_of(
+                        *_USER_METHOD_BYTES, lower=True
+                    ),
+                    cv.Optional(CONF_INDEX, default=-1): cv.int_,
+                }
+            )
+        ),
+        # Debounce repeated unlocks from the same credential (0 = off).
+        cv.Optional(
+            CONF_MIN_UNLOCK_INTERVAL, default="0s"
         ): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_PAIRING_UI): _deprecated_pairing_ui,
         cv.Optional(CONF_UNPAIR_BUTTON): button.button_schema(
@@ -211,6 +275,33 @@ async def to_code(config):
         btn = await button.new_button(button_conf)
         await cg.register_parented(btn, config[CONF_ID])
 
+    if last_user_conf := config.get(CONF_LAST_USER):
+        sens = await text_sensor.new_text_sensor(last_user_conf)
+        cg.add(var.set_last_user_text_sensor(sens))
+
+    if last_method_conf := config.get(CONF_LAST_METHOD):
+        sens = await text_sensor.new_text_sensor(last_method_conf)
+        cg.add(var.set_last_method_text_sensor(sens))
+
+    if counts_conf := config.get(CONF_UNLOCK_COUNTS):
+        for method_name in _COUNT_METHODS:
+            if count_conf := counts_conf.get(method_name):
+                count_sensor = await sensor.new_sensor(count_conf)
+                cg.add(
+                    var.set_unlock_count_sensor(
+                        _UNLOCK_METHOD_BYTES[method_name], count_sensor
+                    )
+                )
+
+    for user in config.get(CONF_USERS, []):
+        cg.add(
+            var.add_user(
+                _USER_METHOD_BYTES[user[CONF_METHOD]], user[CONF_INDEX], user[CONF_NAME]
+            )
+        )
+
+    cg.add(var.set_min_unlock_interval(config[CONF_MIN_UNLOCK_INTERVAL].total_milliseconds))
+
     # Make Home Assistant show the "Visit Device" link on the device page.
     # ESPHome's api component fills `webserver_port` in DeviceInfoResponse
     # iff USE_WEBSERVER is defined; HA uses that field to construct the URL.
@@ -237,7 +328,9 @@ async def to_code(config):
     for trig_conf in config.get(CONF_ON_UNLOCK, []):
         trig = cg.new_Pvariable(trig_conf[CONF_TRIGGER_ID], var)
         await automation.build_automation(
-            trig, [(cg.std_string, "method"), (cg.int_, "index")], trig_conf
+            trig,
+            [(cg.std_string, "method"), (cg.int_, "index"), (cg.std_string, "name")],
+            trig_conf,
         )
 
     for trig_conf in config.get(CONF_ON_DOORBELL, []):

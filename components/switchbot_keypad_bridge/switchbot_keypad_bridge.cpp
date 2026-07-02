@@ -507,12 +507,85 @@ void SwitchbotKeypadBridge::publish_lock_() {
   this->on_lock_callbacks_.call();
 }
 
+size_t SwitchbotKeypadBridge::method_slot_(UnlockMethod method) {
+  switch (method) {
+    case UnlockMethod::PIN:         return 0;
+    case UnlockMethod::NFC:         return 1;
+    case UnlockMethod::FINGERPRINT: return 2;
+    case UnlockMethod::FACE:        return 3;
+    default:                        return 4;  // UNKNOWN
+  }
+}
+
+void SwitchbotKeypadBridge::set_unlock_count_sensor(uint8_t method, sensor::Sensor *s) {
+  this->unlock_count_sensors_[method_slot_(static_cast<UnlockMethod>(method))] = s;
+}
+
+std::string SwitchbotKeypadBridge::lookup_user_(UnlockMethod method, int index) const {
+  const uint8_t m = static_cast<uint8_t>(method);
+  // Prefer the most specific match: exact (method, index) beats a
+  // method-with-any-slot rule, which beats an any-method rule.
+  const UserEntry *best = nullptr;
+  int best_score = -1;
+  for (const auto &u : this->users_) {
+    const bool method_ok = (u.method == 0xFF) || (u.method == m);
+    const bool index_ok = (u.index < 0) || (u.index == index);
+    if (!method_ok || !index_ok) continue;
+    const int score = (u.method != 0xFF ? 2 : 0) + (u.index >= 0 ? 1 : 0);
+    if (score > best_score) {
+      best_score = score;
+      best = &u;
+    }
+  }
+  return best != nullptr ? best->name : std::string();
+}
+
 void SwitchbotKeypadBridge::publish_unlock_(UnlockMethod method, int index) {
+  // Same-credential debounce: drop a repeat of the last unlock that lands
+  // inside the configured window. The keypad's BLE ACK is still sent by the
+  // caller; only the Home Assistant-facing event is suppressed.
+  if (this->min_unlock_interval_ms_ > 0) {
+    const uint32_t now = millis();
+    if (this->last_unlock_index_ == index && this->last_unlock_method_ == method &&
+        (now - this->last_unlock_ms_) < this->min_unlock_interval_ms_) {
+      ESP_LOGD(TAG, "Unlock debounced (same credential within %u ms)",
+               static_cast<unsigned>(this->min_unlock_interval_ms_));
+      this->last_unlock_ms_ = now;
+      return;
+    }
+    this->last_unlock_ms_ = now;
+  }
+  this->last_unlock_method_ = method;
+  this->last_unlock_index_ = index;
+
   const char *method_str = unlock_method_name(method);
+  const std::string name = this->lookup_user_(method, index);
+
+  if (this->last_method_sensor_ != nullptr) {
+    this->last_method_sensor_->publish_state(method_str);
+  }
+  if (this->last_user_sensor_ != nullptr) {
+    // Fall back to a readable "<method> #<index>" for an unmapped slot.
+    std::string label = name;
+    if (label.empty()) {
+      char buf[32];
+      snprintf(buf, sizeof(buf), "%s #%d", method_str, index);
+      label = buf;
+    }
+    this->last_user_sensor_->publish_state(label);
+  }
+
+  const size_t slot = method_slot_(method);
+  this->unlock_counts_[slot]++;
+  if (this->unlock_count_sensors_[slot] != nullptr) {
+    this->unlock_count_sensors_[slot]->publish_state(
+        static_cast<float>(this->unlock_counts_[slot]));
+  }
+
   if (this->keypad_event_ != nullptr) {
     this->keypad_event_->trigger("Unlock");
   }
-  this->on_unlock_callbacks_.call(std::string(method_str), index);
+  this->on_unlock_callbacks_.call(std::string(method_str), index, name);
 }
 
 void SwitchbotKeypadBridge::publish_doorbell_() {

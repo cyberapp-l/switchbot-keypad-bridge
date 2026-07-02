@@ -13,11 +13,13 @@ class LockTrigger : public Trigger<> {
   }
 };
 
-class UnlockTrigger : public Trigger<std::string, int> {
+class UnlockTrigger : public Trigger<std::string, int, std::string> {
  public:
   explicit UnlockTrigger(SwitchbotKeypadBridge *parent) {
     parent->add_on_unlock_callback(
-        [this](const std::string &method, int index) { this->trigger(method, index); });
+        [this](const std::string &method, int index, const std::string &name) {
+          this->trigger(method, index, name);
+        });
   }
 };
 
