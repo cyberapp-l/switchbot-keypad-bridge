@@ -121,6 +121,35 @@ To stream logs at any time:
 esphome logs switchbot-keypad-bridge.yaml
 ```
 
+## 🔌 Wired Ethernet — WT32-ETH01 (ESP-LAN)
+
+Prefer a wired connection at the door? The bridge runs unchanged over
+Ethernet — the firmware is completely network-agnostic, so only the YAML
+differs. A ready-made config for the **WT32-ETH01** (ESP32-WROOM-32 + LAN8720
+PHY) ships as [`switchbot-keypad-bridge-wt32-eth01.yaml`](switchbot-keypad-bridge-wt32-eth01.yaml):
+
+```bash
+esphome run switchbot-keypad-bridge-wt32-eth01.yaml
+```
+
+The Ethernet build needs no Wi-Fi credentials — only `ota_password` in
+`secrets.yaml`. Everything else (pairing wizard on port 80, unlock events,
+battery, doorbell) works exactly as on the Wi-Fi build.
+
+> **Why wired can be better here:** on the ESP32, BLE and wired Ethernet don't
+> share the radio the way Wi-Fi + BLE do, so the BLE link to the keypad never
+> competes with network traffic.
+
+The config already carries the correct LAN8720 pin-out for the WT32-ETH01
+(`MDC=GPIO23`, `MDIO=GPIO18`, clock in on `GPIO0`, `power_pin=GPIO16`,
+`phy_addr=1`). Any ESP32 with a supported Ethernet PHY works — just adapt the
+`ethernet:` block (e.g. an Olimex ESP32-PoE for a Power-over-Ethernet door
+controller).
+
+> **No PSRAM on the WT32-ETH01.** The bridge runs fine without it; ESPHome
+> will print a one-line "consider enabling PSRAM" note at compile time, which
+> is safe to ignore on this board.
+
 ## 👤 Knowing who unlocked the door
 
 Every `on_unlock` trigger carries two values:

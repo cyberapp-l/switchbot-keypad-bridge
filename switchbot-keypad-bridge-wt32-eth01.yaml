@@ -1,0 +1,95 @@
+# SwitchBot Keypad Bridge — WT32-ETH01 (wired Ethernet / ESP-LAN) variant.
+#
+# Identical firmware to the Wi-Fi build; it just reaches the network over the
+# WT32-ETH01's on-board LAN8720 Ethernet PHY instead of Wi-Fi. Useful where
+# Wi-Fi is weak at the door, or when you want a reliable wired access
+# controller.
+#
+# Note on the radio: on the ESP32, BLE and wired Ethernet do NOT share the
+# radio (unlike Wi-Fi + BLE), so this is actually a cleaner combination —
+# the BLE link to the keypad never competes with network traffic.
+#
+# Board: WT32-ETH01 = ESP32-WROOM-32 (plain ESP32, no PSRAM, 4 MB flash).
+
+esphome:
+  name: switchbot-keypad-bridge
+
+esp32:
+  board: esp32dev            # WT32-ETH01 is a plain ESP32-WROOM-32
+  framework:
+    type: esp-idf            # required: PSA crypto, NimBLE, esp_http_server
+
+# The component ships in this repo. Using the LOCAL copy means your fork's
+# changes take effect immediately, without pushing to GitHub first. To pull
+# it straight from your fork instead, swap this for:
+#   - source: github://cyberapp-l/switchbot-keypad-bridge
+#     components: [switchbot_keypad_bridge]
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [switchbot_keypad_bridge]
+
+# ── Wired Ethernet on the WT32-ETH01 (LAN8720 RMII PHY) ────────────────────
+# Reserved pins: GPIO0 (50 MHz clock in), GPIO23 (MDC), GPIO18 (MDIO),
+# GPIO16 (PHY power), plus the fixed RMII data lines
+# (GPIO19/21/22/25/26/27). Don't use any of these for anything else.
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk_mode: GPIO0_IN
+  phy_addr: 1
+  power_pin: GPIO16
+  # DHCP is the default. To pin a static address, uncomment:
+  # manual_ip:
+  #   static_ip: 192.168.1.50
+  #   gateway: 192.168.1.1
+  #   subnet: 255.255.255.0
+  #
+  # Troubleshooting: if the link never comes up on your board revision, try
+  # removing `power_pin` — a few early WT32-ETH01 units wire GPIO16
+  # differently. The rest of the pin-out is fixed by the board.
+
+logger:
+  level: VERBOSE
+
+api:
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# TLS in the pairing wizard needs a valid system clock; SNTP keeps it set
+# even before Home Assistant connects.
+time:
+  - platform: sntp
+
+switchbot_keypad_bridge:
+  keypad_action:
+    name: "Action"
+
+  keypad:
+    name: "Keypad"
+
+  # Keypad battery, read from its BLE advertisement once per scan interval.
+  battery_level:
+    name: "Keypad Battery"
+  # battery_scan_interval: 15min
+
+  unpair_button:
+    name: "Unpair"
+
+  on_unlock:
+    # method: "pin" | "fingerprint" | "nfc" | "face" | "unknown"   index: credential slot
+    - homeassistant.event:
+        event: esphome.switchbot_keypad_unlock
+        data:
+          method: !lambda 'return method;'
+          index: !lambda 'return to_string(index);'
+
+  # on_lock:
+  #   - logger.log: "Locked"
+
+  # on_doorbell:
+  #   - logger.log: "Doorbell pressed"
