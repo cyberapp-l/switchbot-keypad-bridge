@@ -2,12 +2,13 @@
 
 // Lightweight HTTP server that hosts the on-device pairing wizard.
 //
-// Endpoints:
+// Endpoints (all behind HTTP Basic Auth when a web password is set):
 //   GET  /                       → embedded HTML (single self-contained page)
 //   POST /api/login              → {email,password} → {region} | 401
 //   GET  /api/keypads            → [ {mac, name, model, online, rssi} ]
 //   POST /api/pair               → {mac} → {job_id, labels: [step names]}
 //   GET  /api/pair/status        → {step, total, message, done, error}
+//   GET  /api/events             → [ {type, ts, ago, method, index, name} ]
 //
 // The server uses ESP-IDF's `esp_http_server` (already pulled in by NimBLE
 // and the ESP-IDF framework — no extra managed components needed).
@@ -61,6 +62,13 @@ class PairingUi {
     this->on_paired_cb_ = std::move(cb);
   }
 
+  // Supplies the JSON array served by GET /api/events (the component's on-device
+  // event log). Invoked on the HTTP-server task, so the component serialises
+  // its ring buffer under its own lock.
+  void set_events_provider(std::function<std::string()> cb) {
+    this->events_provider_ = std::move(cb);
+  }
+
   bool is_running() const { return this->server_ != nullptr; }
 
   // Optional HTTP Basic Auth for the whole server. When a password is set,
@@ -97,6 +105,7 @@ class PairingUi {
   static esp_err_t handle_keypads_(httpd_req_t *req);
   static esp_err_t handle_pair_(httpd_req_t *req);
   static esp_err_t handle_pair_status_(httpd_req_t *req);
+  static esp_err_t handle_events_(httpd_req_t *req);
 
   static esp_err_t reply_json_(httpd_req_t *req, const char *json,
                                const char *status = "200 OK");
@@ -114,6 +123,7 @@ class PairingUi {
   const uint8_t *html_{nullptr};
   size_t         html_len_{0};
   OnPairedCallback on_paired_cb_;
+  std::function<std::string()> events_provider_;
   // Identify the pairing this UI started. The success handler matches
   // Status::job_id against pairing_job_id_ before firing on_paired_cb_,
   // so a previous job's lingering SUCCESS can never apply the wrong

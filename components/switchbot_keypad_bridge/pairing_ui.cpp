@@ -60,6 +60,7 @@ bool PairingUi::start(uint16_t port) {
   reg("/api/keypads",       HTTP_GET,  PairingUi::handle_keypads_);
   reg("/api/pair",          HTTP_POST, PairingUi::handle_pair_);
   reg("/api/pair/status",   HTTP_GET,  PairingUi::handle_pair_status_);
+  reg("/api/events",        HTTP_GET,  PairingUi::handle_events_);
 
   ESP_LOGI(TAG, "Pairing UI listening on http://<device>:%u/", port);
   return true;
@@ -422,6 +423,16 @@ esp_err_t PairingUi::handle_pair_status_(httpd_req_t *req) {
     cJSON_AddNullToObject(resp, "error");
   }
   return reply_json_(req, json_take(resp).c_str());
+}
+
+esp_err_t PairingUi::handle_events_(httpd_req_t *req) {
+  if (!require_auth_(req)) return ESP_OK;
+  auto *self = static_cast<PairingUi *>(req->user_ctx);
+  if (!self->events_provider_) {
+    return reply_json_(req, "[]");
+  }
+  const std::string body = self->events_provider_();
+  return reply_json_(req, body.c_str());
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────

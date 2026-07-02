@@ -473,6 +473,54 @@
   }
   .preview-nav button:hover { background: rgba(255,255,255,0.18); }
   .preview-nav button.active { background: var(--sb-theme); border-color: var(--sb-theme); }
+
+  /* ── Language toggle in the top bar ── */
+  .topbar-spacer { flex: 1; }
+  .lang-btn {
+    background: transparent; border: 1px solid var(--sb-divider);
+    color: var(--sb-cc2); font: inherit; font-size: 13px; font-weight: 600;
+    padding: 5px 12px; border-radius: 999px; cursor: pointer;
+  }
+  .lang-btn:hover { background: var(--sb-window-bg); }
+
+  /* ── Tab bar (Pair | Activity) ── */
+  .tabbar {
+    display: flex; gap: 4px;
+    max-width: 440px; margin: 0 auto; padding: 10px var(--sp-md) 0;
+  }
+  .tab {
+    flex: 1; text-align: center;
+    background: transparent; border: none; cursor: pointer;
+    font: inherit; font-size: 14px; font-weight: 600;
+    color: var(--sb-cc2); padding: 10px 8px;
+    border-bottom: 2px solid transparent;
+  }
+  .tab.active { color: var(--sb-theme); border-bottom-color: var(--sb-theme); }
+  .tab:hover:not(.active) { color: var(--sb-primary-text); }
+
+  /* ── Activity / event log ── */
+  .events { display: flex; flex-direction: column; gap: 8px; }
+  .event-row {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--sb-card-bg); border: 1px solid var(--sb-divider);
+    border-radius: var(--radius-input); padding: 12px 14px;
+    box-shadow: var(--sb-shadow);
+  }
+  .event-ic {
+    width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px;
+  }
+  .event-ic.unlock   { background: var(--sb-success-bg); }
+  .event-ic.lock     { background: var(--sb-blue-tip-bg); }
+  .event-ic.doorbell { background: var(--sb-alert-bg); }
+  .event-body { flex: 1; min-width: 0; }
+  .event-title { font-weight: 600; font-size: 14px; }
+  .event-sub { color: var(--sb-support); font-size: 12px; }
+  .event-time { color: var(--sb-support); font-size: 12px; white-space: nowrap; }
+
+  /* RTL: keep numeric/mac runs LTR inside a right-to-left page. */
+  [dir="rtl"] .kp-mac, [dir="rtl"] .event-time { direction: ltr; unicode-bidi: isolate; }
 </style>
 </head>
 <body>
@@ -496,7 +544,15 @@
 <header class="topbar">
   <div class="topbar-dot"></div>
   <span class="topbar-title">Keypad Bridge</span>
+  <span class="topbar-spacer"></span>
+  <button class="lang-btn" id="lang-btn" type="button" onclick="toggleLang()">עברית</button>
 </header>
+
+<!-- Tab bar: the pairing wizard vs the on-device activity log -->
+<nav class="tabbar">
+  <button class="tab active" id="tab-pair" type="button" onclick="openPair()">Pair</button>
+  <button class="tab" id="tab-activity" type="button" onclick="openActivity()">Activity</button>
+</nav>
 
 <main class="container">
 
@@ -665,6 +721,18 @@
     <p class="footnote" id="progress-hint">Pairing takes about 10 seconds.</p>
   </section>
 
+  <!-- ─── Activity (event log) ─── -->
+  <section id="screen-activity" class="screen hidden">
+    <div class="page-header">
+      <h2 id="act-title">Recent activity</h2>
+      <p class="subtitle" id="act-subtitle">The last unlocks, locks and doorbell presses seen by the bridge.</p>
+    </div>
+    <div class="events" id="events-list">
+      <div class="empty-state" id="act-empty">No activity yet.</div>
+    </div>
+    <button id="act-refresh" class="btn btn-secondary" type="button" onclick="loadEvents()">↻ Refresh</button>
+  </section>
+
 </main>
 
 <script>
@@ -673,6 +741,151 @@
      hidden, which lets the firmware embed this page byte-for-byte. */
   if (location.protocol === 'file:') {
     document.getElementById('preview-nav').hidden = false;
+  }
+
+  /* ── Internationalisation (English / Hebrew) ─────────────────────────────
+     Our own strings — nothing lifted from any other project. Static text is
+     translated by selector so the existing markup needs no per-element hooks;
+     dynamic text goes through t(). Hebrew flips the page to RTL. */
+  const STRINGS = {
+    en: {
+      topbar: 'Keypad Bridge', tab_pair: 'Pair', tab_activity: 'Activity',
+      login_h1: 'Sign in',
+      login_sub: 'Connect your SwitchBot account to discover keypads.',
+      login_email: 'Email', login_password: 'Password', login_btn: 'Continue',
+      login_foot: 'Credentials are used only to call the SwitchBot API and are kept in device RAM for this session only.',
+      keypads_h2: 'Your keypads',
+      keypads_sub: 'Select a keypad to pair with this bridge.',
+      rescan: '↻ Rescan', pair: 'Pair', out_of_range: 'Out of range', nearby: 'Nearby',
+      pair_hint: 'Pairing takes about 10 seconds.',
+      pair_success_h: 'Paired!', pair_success_desc: 'Your keypad is connected to this bridge.',
+      pair_success_hint: 'Paired. This page stays available for pairing and the activity log.',
+      pair_fail_h: 'Pairing failed', pair_fail_desc: 'Could not complete the BLE handshake.',
+      try_again: 'Try again',
+      signing_in: 'Signing in…', searching: 'Searching for keypads nearby…',
+      no_keypads: 'No keypads found in your SwitchBot account.',
+      act_title: 'Recent activity',
+      act_subtitle: 'The last unlocks, locks and doorbell presses seen by the bridge.',
+      act_empty: 'No activity yet.', act_loading: 'Loading…', act_refresh: '↻ Refresh',
+      ev_unlock: 'Unlock', ev_lock: 'Lock', ev_doorbell: 'Doorbell', ago_now: 'just now',
+      method_pin: 'PIN', method_fingerprint: 'Fingerprint', method_nfc: 'NFC',
+      method_face: 'Face', method_unknown: 'Unknown',
+    },
+    he: {
+      topbar: 'גשר קודן', tab_pair: 'צימוד', tab_activity: 'פעילות',
+      login_h1: 'כניסה',
+      login_sub: 'התחבר לחשבון ה-SwitchBot שלך כדי לגלות קודנים.',
+      login_email: 'אימייל', login_password: 'סיסמה', login_btn: 'המשך',
+      login_foot: 'פרטי ההתחברות משמשים רק לקריאת ה-API של SwitchBot ונשמרים בזיכרון המכשיר להפעלה הזו בלבד.',
+      keypads_h2: 'הקודנים שלך',
+      keypads_sub: 'בחר קודן לצימוד עם הגשר הזה.',
+      rescan: '↻ סרוק שוב', pair: 'צמד', out_of_range: 'מחוץ לטווח', nearby: 'בקרבת מקום',
+      pair_hint: 'הצימוד אורך כ-10 שניות.',
+      pair_success_h: 'צומד!', pair_success_desc: 'הקודן מחובר לגשר הזה.',
+      pair_success_hint: 'צומד. הדף נשאר זמין לצימוד וליומן הפעילות.',
+      pair_fail_h: 'הצימוד נכשל', pair_fail_desc: 'לא הצלחנו להשלים את לחיצת-היד ב-BLE.',
+      try_again: 'נסה שוב',
+      signing_in: 'מתחבר…', searching: 'מחפש קודנים בקרבת מקום…',
+      no_keypads: 'לא נמצאו קודנים בחשבון ה-SwitchBot שלך.',
+      act_title: 'פעילות אחרונה',
+      act_subtitle: 'הפתיחות, הנעילות ולחיצות-הפעמון האחרונות שהגשר קלט.',
+      act_empty: 'אין פעילות עדיין.', act_loading: 'טוען…', act_refresh: '↻ רענן',
+      ev_unlock: 'פתיחה', ev_lock: 'נעילה', ev_doorbell: 'פעמון', ago_now: 'כרגע',
+      method_pin: 'קוד', method_fingerprint: 'טביעת אצבע', method_nfc: 'NFC',
+      method_face: 'זיהוי פנים', method_unknown: 'לא ידוע',
+    },
+  };
+  // selector -> string key, for the static (non-JS-generated) elements.
+  const SEL = {
+    '.topbar-title': 'topbar', '#tab-pair': 'tab_pair', '#tab-activity': 'tab_activity',
+    '#screen-login h1': 'login_h1', '#screen-login .subtitle': 'login_sub',
+    'label[for="email"]': 'login_email', 'label[for="password"]': 'login_password',
+    '#login-form button[type="submit"]': 'login_btn', '#screen-login .footnote': 'login_foot',
+    '#screen-keypads h2': 'keypads_h2', '#screen-keypads .subtitle': 'keypads_sub',
+    '#rescan-btn': 'rescan',
+    '#progress-result-success h2': 'pair_success_h', '#progress-result-success .desc': 'pair_success_desc',
+    '#progress-result-error h2': 'pair_fail_h', '#progress-result-error .desc': 'pair_fail_desc',
+    '#progress-result-error .btn-primary': 'try_again',
+    '#act-title': 'act_title', '#act-subtitle': 'act_subtitle',
+    '#act-empty': 'act_empty', '#act-refresh': 'act_refresh',
+  };
+  let LANG = 'en';
+  function t(k) { return (STRINGS[LANG] && STRINGS[LANG][k]) || STRINGS.en[k] || k; }
+  function methodLabel(m) { return t('method_' + (m || 'unknown')); }
+  function applyLang(lang) {
+    LANG = STRINGS[lang] ? lang : 'en';
+    const root = document.documentElement;
+    root.lang = LANG;
+    root.dir = LANG === 'he' ? 'rtl' : 'ltr';
+    for (const sel in SEL) {
+      const el = document.querySelector(sel);
+      if (el) el.textContent = t(SEL[sel]);
+    }
+    const lb = document.getElementById('lang-btn');
+    if (lb) lb.textContent = LANG === 'he' ? 'English' : 'עברית';
+    try { localStorage.setItem('kb_lang', LANG); } catch (_) {}
+    // Re-render a visible activity list so its dynamic text follows the language.
+    if (!document.getElementById('screen-activity').classList.contains('hidden')) loadEvents();
+  }
+  function toggleLang() { applyLang(LANG === 'he' ? 'en' : 'he'); }
+
+  /* ── Tabs (Pair | Activity) ─────────────────────────────────────────────── */
+  let lastWizardScreen = 'login';
+  function updateTabs(name) {
+    const activity = name === 'activity';
+    document.getElementById('tab-pair').classList.toggle('active', !activity);
+    document.getElementById('tab-activity').classList.toggle('active', activity);
+  }
+  function openPair() { showScreen(lastWizardScreen || 'login'); }
+  function openActivity() { showScreen('activity'); loadEvents(); }
+
+  /* ── Activity (event log) ───────────────────────────────────────────────── */
+  function timeAgo(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return t('ago_now');
+    const m = Math.round(s / 60);
+    if (m < 60) return LANG === 'he' ? ('לפני ' + m + ' דקות') : (m + 'm ago');
+    const h = Math.round(m / 60);
+    if (h < 24) return LANG === 'he' ? ('לפני ' + h + ' שעות') : (h + 'h ago');
+    const d = Math.round(h / 24);
+    return LANG === 'he' ? ('לפני ' + d + ' ימים') : (d + 'd ago');
+  }
+  function renderEvent(e) {
+    const row = document.createElement('div');
+    row.className = 'event-row';
+    const icons = { unlock: '🔓', lock: '🔒', doorbell: '🔔' };
+    let title, sub = '';
+    if (e.type === 'unlock') {
+      title = e.name ? escapeHtml(e.name) : t('ev_unlock');
+      sub = t('ev_unlock') + ' · ' + escapeHtml(methodLabel(e.method)) +
+            (e.index != null && e.index >= 0 ? (' #' + e.index) : '');
+    } else {
+      title = e.type === 'lock' ? t('ev_lock') : t('ev_doorbell');
+    }
+    const when = (e.ts && e.ts > 1600000000)
+      ? new Date(e.ts * 1000).toLocaleString()
+      : timeAgo(e.ago || 0);
+    row.innerHTML =
+      '<div class="event-ic ' + escapeHtml(e.type) + '">' + (icons[e.type] || '•') + '</div>' +
+      '<div class="event-body"><div class="event-title">' + title + '</div>' +
+      (sub ? '<div class="event-sub">' + sub + '</div>' : '') + '</div>' +
+      '<div class="event-time">' + escapeHtml(when) + '</div>';
+    return row;
+  }
+  async function loadEvents() {
+    const list = document.getElementById('events-list');
+    list.innerHTML = '<div class="empty-state"><div class="spinner"></div>' + t('act_loading') + '</div>';
+    try {
+      const evs = await api('GET', '/api/events');
+      if (!Array.isArray(evs) || evs.length === 0) {
+        list.innerHTML = '<div class="empty-state">' + t('act_empty') + '</div>';
+        return;
+      }
+      list.innerHTML = '';
+      for (const e of evs) list.appendChild(renderEvent(e));
+    } catch (err) {
+      list.innerHTML = '<div class="empty-state">' + escapeHtml(err.message) + '</div>';
+    }
   }
 
   /* Preview-only theme toggle. The real firmware just follows the
@@ -695,6 +908,8 @@
     const btn = [...document.querySelectorAll('.preview-nav button')]
       .find(b => b.textContent.trim().toLowerCase().includes(name.replace('result-', '').replace(/-/g, ' ')));
     if (btn) btn.classList.add('active');
+    if (name !== 'activity') lastWizardScreen = name;
+    updateTabs(name);
   }
 
   /* Preview-only: reset the progress card to its live "pairing in progress"
@@ -704,7 +919,7 @@
     document.getElementById('progress-result-success').classList.add('hidden');
     document.getElementById('progress-result-error').classList.add('hidden');
     document.getElementById('progress-stepper').classList.remove('hidden');
-    setProgressHint('Pairing takes about 10 seconds.');
+    setProgressHint(t('pair_hint'));
     const steps = document.querySelectorAll('#progress-stepper .step');
     steps.forEach((li, i) => {
       li.classList.remove('done', 'active');
@@ -756,7 +971,7 @@
     const btn = e.target.querySelector('button[type="submit"]');
     const original = btn.innerHTML;
     btn.disabled = true;
-    btn.textContent = 'Signing in…';
+    btn.textContent = t('signing_in');
     setBanner('login-error', null);
     try {
       await api('POST', '/api/login', {
@@ -787,12 +1002,12 @@
     list.innerHTML =
       '<div class="empty-state">' +
         '<div class="spinner"></div>' +
-        'Searching for keypads nearby…' +
+        t('searching') +
       '</div>';
     try {
       const keypads = await api('GET', '/api/keypads');
       if (!Array.isArray(keypads) || keypads.length === 0) {
-        list.innerHTML = '<div class="empty-state">No keypads found in your SwitchBot account.</div>';
+        list.innerHTML = '<div class="empty-state">' + t('no_keypads') + '</div>';
         return;
       }
       list.innerHTML = '';
@@ -810,9 +1025,9 @@
     const card = document.createElement('div');
     const offline = !kp.online;
     card.className = 'kp-card' + (offline ? '' : ' online');
-    const rssiLabel = kp.rssi != null ? '−' + Math.abs(kp.rssi) + ' dBm' : 'Nearby';
+    const rssiLabel = kp.rssi != null ? '−' + Math.abs(kp.rssi) + ' dBm' : t('nearby');
     const badgeClass = offline ? 'offline' : 'online';
-    const badgeText = offline ? 'Out of range' : rssiLabel;
+    const badgeText = offline ? t('out_of_range') : rssiLabel;
     const kpSvg =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" ' +
         'stroke-linecap="round" stroke-linejoin="round">' +
@@ -834,7 +1049,7 @@
           '<span class="kp-badge ' + badgeClass + '"><span class="dot"></span>' + escapeHtml(badgeText) + '</span>' +
         '</div>' +
       '</div>' +
-      '<button class="btn-pair"' + (offline ? ' disabled' : '') + '>Pair</button>';
+      '<button class="btn-pair"' + (offline ? ' disabled' : '') + '>' + t('pair') + '</button>';
     card.querySelector('.btn-pair').addEventListener('click', () => {
       if (offline) return;
       startPair(kp);
@@ -866,7 +1081,7 @@
     document.getElementById('progress-stepper').classList.remove('hidden');
     document.getElementById('progress-result-success').classList.add('hidden');
     document.getElementById('progress-result-error').classList.add('hidden');
-    setProgressHint('Pairing takes about 10 seconds.');
+    setProgressHint(t('pair_hint'));
 
     let jobId;
     try {
@@ -931,7 +1146,7 @@
 
   function showResultSuccess() {
     document.getElementById('progress-stepper').classList.add('hidden');
-    setProgressHint('You can close this page — the pairing server shuts down automatically.');
+    setProgressHint(t('pair_success_hint'));
     document.getElementById('progress-result-error').classList.add('hidden');
     document.getElementById('progress-result-success').classList.remove('hidden');
     document.getElementById('progress-bar').style.width = '100%';
@@ -949,6 +1164,16 @@
     const banner = document.getElementById('error-banner-text');
     if (banner) banner.textContent = msg;
   }
+
+  /* Initialise language: saved choice, else the browser's, else English. */
+  (function initLang() {
+    let saved = null;
+    try { saved = localStorage.getItem('kb_lang'); } catch (_) {}
+    const guess = saved ||
+      ((navigator.language || '').toLowerCase().startsWith('he') ? 'he' : 'en');
+    applyLang(guess);
+    updateTabs('login');
+  })();
 </script>
 </body>
 </html>

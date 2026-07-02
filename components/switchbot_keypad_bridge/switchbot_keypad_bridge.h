@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <string>
 #include <mutex>
@@ -176,6 +177,22 @@ class SwitchbotKeypadBridge : public Component {
   // Resolve a credential to its configured display name, or "" if unmapped.
   std::string lookup_user_(UnlockMethod method, int index) const;
 
+  // ----- On-device event log -------------------------------------------------
+
+  enum class EventType : uint8_t { LOCK = 0, UNLOCK = 1, DOORBELL = 2 };
+  struct LogEvent {
+    uint32_t ts;      // epoch seconds; 0 when the clock is not yet SNTP-synced
+    uint32_t up_ms;   // millis() at capture, for a "N ago" fallback
+    EventType type;
+    UnlockMethod method;
+    int16_t index;
+    std::string name;
+  };
+  // Append an event to the ring buffer (main task). Serialised as JSON on the
+  // HTTP task via events_json_() for GET /api/events.
+  void log_event_(EventType type, UnlockMethod method, int index, const std::string &name);
+  std::string events_json_();
+
   // ----- Keypad battery (advertisement scan) ----------------------------------
 
   // The keypad broadcasts its battery level in its BLE advertisement (the
@@ -256,6 +273,12 @@ class SwitchbotKeypadBridge : public Component {
   // HTTP Basic Auth credentials for the web console (empty pass = open).
   std::string web_user_{"admin"};
   std::string web_pass_{};
+
+  // Recent lock/unlock/doorbell events, newest at the back. Written by the
+  // main task, read (serialised) by the HTTP task, so guarded by its mutex.
+  static constexpr size_t EVENT_LOG_MAX = 32;
+  std::deque<LogEvent> event_log_;
+  std::mutex event_log_mutex_;
 
   // ----- User configuration --------------------------------------------------
 

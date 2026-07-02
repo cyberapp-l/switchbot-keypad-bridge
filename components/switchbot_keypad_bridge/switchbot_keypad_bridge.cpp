@@ -3,8 +3,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <vector>
 
+#include <cJSON.h>
 #include <esp_mac.h>
 #include <esp_random.h>
 #include <psa/crypto.h>
@@ -170,6 +172,7 @@ void SwitchbotKeypadBridge::setup() {
 
   this->pairing_ui_.set_shared_key(this->shared_key_);
   this->pairing_ui_.set_credentials(this->web_user_, this->web_pass_);
+  this->pairing_ui_.set_events_provider([this]() { return this->events_json_(); });
   this->pairing_ui_.set_on_paired_callback(
       [this](const std::string &name, const std::string &mac,
              KeypadFamily family) {
@@ -501,6 +504,7 @@ void SwitchbotKeypadBridge::publish_lock_() {
   if (this->keypad_event_ != nullptr) {
     this->keypad_event_->trigger("Lock");
   }
+  this->log_event_(EventType::LOCK, UnlockMethod::UNKNOWN, -1, "");
   this->on_lock_callbacks_.call();
 }
 
@@ -579,6 +583,8 @@ void SwitchbotKeypadBridge::publish_unlock_(UnlockMethod method, int index) {
         static_cast<float>(this->unlock_counts_[slot]));
   }
 
+  this->log_event_(EventType::UNLOCK, method, index, name);
+
   if (this->keypad_event_ != nullptr) {
     this->keypad_event_->trigger("Unlock");
   }
@@ -589,7 +595,64 @@ void SwitchbotKeypadBridge::publish_doorbell_() {
   if (this->keypad_event_ != nullptr) {
     this->keypad_event_->trigger("Doorbell");
   }
+  this->log_event_(EventType::DOORBELL, UnlockMethod::UNKNOWN, -1, "");
   this->on_doorbell_callbacks_.call();
+}
+
+// ---------------------------------------------------------------------------
+// On-device event log
+// ---------------------------------------------------------------------------
+
+void SwitchbotKeypadBridge::log_event_(EventType type, UnlockMethod method, int index,
+                                       const std::string &name) {
+  LogEvent ev{};
+  ev.ts = static_cast<uint32_t>(::time(nullptr));  // 0-ish until SNTP syncs
+  ev.up_ms = millis();
+  ev.type = type;
+  ev.method = method;
+  ev.index = static_cast<int16_t>(index);
+  ev.name = name;
+
+  std::lock_guard<std::mutex> lk(this->event_log_mutex_);
+  this->event_log_.push_back(std::move(ev));
+  while (this->event_log_.size() > EVENT_LOG_MAX) {
+    this->event_log_.pop_front();
+  }
+}
+
+std::string SwitchbotKeypadBridge::events_json_() {
+  const uint32_t now_ms = millis();
+  cJSON *arr = cJSON_CreateArray();
+  {
+    std::lock_guard<std::mutex> lk(this->event_log_mutex_);
+    // Newest first — friendlier for a log view.
+    for (auto it = this->event_log_.rbegin(); it != this->event_log_.rend(); ++it) {
+      const LogEvent &e = *it;
+      cJSON *o = cJSON_CreateObject();
+      const char *type = e.type == EventType::LOCK       ? "lock"
+                         : e.type == EventType::UNLOCK   ? "unlock"
+                                                         : "doorbell";
+      cJSON_AddStringToObject(o, "type", type);
+      cJSON_AddNumberToObject(o, "ts", static_cast<double>(e.ts));
+      // Milliseconds since the event, computed now — lets the UI show a
+      // relative "N ago" even when the clock was never SNTP-synced.
+      cJSON_AddNumberToObject(o, "ago", static_cast<double>(now_ms - e.up_ms));
+      if (e.type == EventType::UNLOCK) {
+        cJSON_AddStringToObject(o, "method", unlock_method_name(e.method));
+        cJSON_AddNumberToObject(o, "index", e.index);
+        cJSON_AddStringToObject(o, "name", e.name.c_str());
+      }
+      cJSON_AddItemToArray(arr, o);
+    }
+  }
+  std::string out = "[]";
+  char *s = cJSON_PrintUnformatted(arr);
+  if (s != nullptr) {
+    out = s;
+    cJSON_free(s);
+  }
+  cJSON_Delete(arr);
+  return out;
 }
 
 // ---------------------------------------------------------------------------
