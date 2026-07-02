@@ -162,6 +162,11 @@ std::string KeypadPairer::start(Request req) {
   // One-slot ACK semaphore (counting=1 with initial value 0).
   if (this->ack_sem_ == nullptr) {
     this->ack_sem_ = xSemaphoreCreateBinary();
+    if (this->ack_sem_ == nullptr) {
+      delete req_heap;
+      this->set_failed_("Out of memory allocating the ACK semaphore");
+      return "";
+    }
   }
   while (xSemaphoreTake(this->ack_sem_, 0) == pdTRUE) { /* drain */ }
 
@@ -253,7 +258,12 @@ void KeypadPairer::on_notify_(const uint8_t *data, size_t length) {
   // The session-IV reply is the only notification with a payload we
   // actually need to inspect. Everything else just bumps the ACK
   // semaphore so send_command_() can move on.
-  if (length == 20 && data[0] == 0x01 && data[1] == 0x00) {
+  // Latch the session IV exactly once. Ignoring later 20-byte `01 00…`
+  // notifications keeps the NimBLE host task from overwriting iv_ while the
+  // pairing task is reading it inside send_command_ (the IV is negotiated
+  // once per run and never changes afterwards).
+  if (length == 20 && data[0] == 0x01 && data[1] == 0x00 &&
+      !this->iv_received_.load()) {
     std::memcpy(this->iv_.data(), data + 4, 16);
     this->iv_received_.store(true);
   }

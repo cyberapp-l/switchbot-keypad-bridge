@@ -127,6 +127,15 @@ def _deprecated_pairing_ui(value):
     return v
 
 
+def _battery_scan_interval(value):
+    """A too-short interval means back-to-back active BLE scans that starve the
+    keypad link (0 would scan forever), so enforce a sane floor."""
+    value = cv.positive_time_period_milliseconds(value)
+    if value.total_milliseconds < 30000:
+        raise cv.Invalid("battery_scan_interval must be at least 30s.")
+    return value
+
+
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(SwitchbotKeypadBridge),
@@ -144,9 +153,7 @@ CONFIG_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             accuracy_decimals=0,
         ),
-        cv.Optional(
-            CONF_BATTERY_SCAN_INTERVAL, default="15min"
-        ): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_BATTERY_SCAN_INTERVAL, default="15min"): _battery_scan_interval,
         # Display name of the credential behind the most recent unlock, resolved
         # through the `users` mapping (falls back to "<method> #<index>").
         cv.Optional(CONF_LAST_USER): text_sensor.text_sensor_schema(

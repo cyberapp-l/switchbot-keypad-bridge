@@ -234,7 +234,8 @@ esp_err_t PairingUi::handle_login_(httpd_req_t *req) {
   if (email.empty() || password.empty()) {
     return reply_error_(req, "400 Bad Request", "Missing email or password.");
   }
-  ESP_LOGI(TAG, "POST /api/login email=%s", email.c_str());
+  // Don't log the account email — it's PII and the logger runs at VERBOSE.
+  ESP_LOGI(TAG, "POST /api/login (%u-char email)", static_cast<unsigned>(email.size()));
 
   std::string err;
   if (!self->cloud_.login(email, password, err)) {
@@ -251,6 +252,13 @@ esp_err_t PairingUi::handle_keypads_(httpd_req_t *req) {
   auto *self = static_cast<PairingUi *>(req->user_ctx);
   if (!self->cloud_.is_logged_in()) {
     return reply_error_(req, "401 Unauthorized", "Sign in first.");
+  }
+  // A pairing job runs BLE work on its own task; this handler's 8 s scan_nearby
+  // shares the one NimBLE scan singleton with it. Refuse rather than let a
+  // second-tab rescan collide with an in-flight pairing.
+  if (self->pairer_.status().state == KeypadPairer::State::RUNNING) {
+    return reply_error_(req, "409 Conflict",
+                        "A pairing job is running — try again in a moment.");
   }
   std::vector<CloudClient::AccountDevice> devices;
   std::string err;

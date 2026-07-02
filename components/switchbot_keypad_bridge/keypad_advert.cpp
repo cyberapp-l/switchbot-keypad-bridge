@@ -70,9 +70,12 @@ KeypadIdent identify_keypad(const uint8_t *svc_data, size_t len) {
 int parse_keypad_battery(KeypadFamily family,
                          const uint8_t *svc_data, size_t svc_len,
                          const uint8_t *mfr_data, size_t mfr_len) {
+  // A battery level is a percentage; clamp so a firmware quirk or misread
+  // can't publish e.g. 127% to a device_class: battery sensor.
   if (family == KeypadFamily::ORIGINAL) {
     if (svc_data == nullptr || svc_len < 3) return -1;
-    return svc_data[2] & 0x7F;
+    const int pct = svc_data[2] & 0x7F;
+    return pct > 100 ? 100 : pct;
   }
 
   // VISION: pySwitchbot reads mfr_data[7], where mfr_data is the payload
@@ -80,7 +83,8 @@ int parse_keypad_battery(KeypadFamily family,
   // behind the little-endian SwitchBot company id (0x69 0x09).
   if (mfr_data == nullptr || mfr_len < 10) return -1;
   if (mfr_data[0] != 0x69 || mfr_data[1] != 0x09) return -1;
-  return mfr_data[9] & 0x7F;
+  const int pct = mfr_data[9] & 0x7F;
+  return pct > 100 ? 100 : pct;
 }
 
 }  // namespace switchbot_keypad_bridge
