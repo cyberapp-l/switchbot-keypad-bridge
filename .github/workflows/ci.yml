@@ -1,0 +1,59 @@
+name: CI
+
+# Compiles the firmware on every push/PR so build breaks are caught in CI —
+# handy when a local ESPHome install isn't available. The WT32-ETH01 config is
+# used on purpose: it sources the component from `type: local, path: components`,
+# so CI actually builds the code in this checkout (the Wi-Fi quick-start config
+# pulls the component from GitHub instead).
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-python:
+    name: Validate component codegen (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Byte-compile the ESPHome codegen module
+        run: python -m py_compile components/switchbot_keypad_bridge/__init__.py
+
+  compile-firmware:
+    name: Compile firmware (ESP-IDF, local component)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Cache the PlatformIO/ESP-IDF toolchain and ESPHome build tree so only
+      # the first run pays the full toolchain download.
+      - name: Cache build toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('switchbot-keypad-bridge-wt32-eth01.yaml') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install ESPHome
+        run: pip install esphome
+
+      - name: Provide dummy secrets for the build
+        run: |
+          printf 'wifi_ssid: "ci"\nwifi_password: "ci-password"\nota_password: "ci-ota-password"\n' > secrets.yaml
+
+      - name: Compile
+        run: esphome compile switchbot-keypad-bridge-wt32-eth01.yaml
