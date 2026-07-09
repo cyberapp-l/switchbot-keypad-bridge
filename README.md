@@ -152,46 +152,82 @@ controller).
 
 ## 👤 Knowing who unlocked the door
 
-Every `on_unlock` trigger carries two values:
+Every `on_unlock` trigger carries three values:
 
 | Parameter | Type | Values |
 |---|---|---|
 | `method` | `std::string` | `"pin"`, `"fingerprint"`, `"nfc"`, `"face"`, or `"unknown"` |
 | `index` | `int` | Numeric ID of the credential slot |
+| `name` | `std::string` | The person's name for that credential — resolved from `users:` (YAML) or the **Users** tab in the web console. Empty if the slot isn't mapped yet. |
 
 `index` is the slot the SwitchBot app assigns when you add a credential — first
-one gets `0`, the next `1`, and so on. Combined with `method`, it tells you
-exactly who is at the door.
+one gets `0`, the next `1`, and so on. Map each `(method, index)` to a name and
+the bridge fills in `name` for you — no need to build the lookup in Home
+Assistant. You can do it in YAML, or live in the browser (**Users** tab, saved
+on the device — no recompile).
 
-The cleanest pattern: forward both values to Home Assistant as a custom event
-and build per-user automations there, without recompiling the firmware:
+Forward all three to Home Assistant as a custom event:
 
 ```yaml
 switchbot_keypad_bridge:
+  # Name each credential (or do this live in the web UI's Users tab).
+  # method defaults to "any", index to -1 (any slot); most-specific match wins.
+  users:
+    - { name: "Liran", method: fingerprint, index: 0 }
+    - { name: "Liran", method: face,        index: 0 }
+    - { name: "Dana",  method: pin,         index: 1 }
   on_unlock:
     - homeassistant.event:
         event: esphome.switchbot_keypad_unlock
         data:
           method: !lambda 'return method;'
-          index: !lambda 'return to_string(index);'
+          index:  !lambda 'return to_string(index);'
+          name:   !lambda 'return name;'
 ```
 
-Then in Home Assistant, one automation per credential:
+### 📣 On every unlock — announce who opened, and how
+
+One automation covers everyone: it reads `name` and `method` straight off the
+event, so you never touch it again when you add a person.
 
 ```yaml
-alias: Welcome home — owner fingerprint
+alias: Announce who unlocked
+triggers:
+  - trigger: event
+    event_type: esphome.switchbot_keypad_unlock
+actions:
+  - variables:
+      who: "{{ trigger.event.data.name or ('slot ' ~ trigger.event.data.index) }}"
+      how: >-
+        {{ {'pin': 'a PIN', 'fingerprint': 'a fingerprint',
+            'face': 'face recognition', 'nfc': 'an NFC tag'}
+           .get(trigger.event.data.method, trigger.event.data.method) }}
+  - action: notify.mobile_app_phone      # ← your notify service
+    data:
+      title: "🔓 Door unlocked"
+      message: "{{ who }} unlocked the door using {{ how }}."
+```
+
+Result: *“Liran unlocked the door using a fingerprint.”* If a slot has no name
+yet it falls back to *“slot 0 unlocked the door using face recognition”* — open
+the **Activity** tab (or the logs) to read the method + slot number, then name
+it in **Users**.
+
+### One automation per person (optional)
+
+Prefer a distinct action per person? Match on `name`:
+
+```yaml
+alias: Welcome home — Liran
 triggers:
   - trigger: event
     event_type: esphome.switchbot_keypad_unlock
 conditions:
-  - condition: template
-    value_template: >
-      {{ trigger.event.data.method == 'fingerprint' and
-         trigger.event.data.index == '0' }}
+  - "{{ trigger.event.data.name == 'Liran' }}"
 actions:
   - action: notify.mobile_app
     data:
-      message: Welcome home!
+      message: Welcome home, Liran!
 ```
 
 ## 🤖 Automating from the Action event entity

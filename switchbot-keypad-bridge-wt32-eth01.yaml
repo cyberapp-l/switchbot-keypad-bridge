@@ -75,6 +75,10 @@ switchbot_keypad_bridge:
   # Keypad battery, read from its BLE advertisement once per scan interval.
   battery_level:
     name: "Keypad Battery"
+
+  # ↓ battery_scan_interval is a SIBLING of battery_level (2-space indent),
+  #   NOT nested under it. Minimum 30s. You can also set it live in the web
+  #   console → Settings tab (no reflash).
   # battery_scan_interval: 15min
 
   unpair_button:
