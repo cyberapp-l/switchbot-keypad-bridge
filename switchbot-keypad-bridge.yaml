@@ -12,8 +12,16 @@ psram:
   mode: octal
   speed: 80MHz
 
+# This branch (feat/conx-parity) adds options (users, last_user, web_password,
+# the Activity log, i18n) that only exist in THIS repo's component — so build
+# against the LOCAL copy, not the upstream GitHub source. To pull it from your
+# fork's branch instead, use:
+#   - source: github://cyberapp-l/switchbot-keypad-bridge@feat/conx-parity
+#     components: [switchbot_keypad_bridge]
 external_components:
-  - source: github://pierluigizagaria/switchbot-keypad-bridge
+  - source:
+      type: local
+      path: components
     components: [switchbot_keypad_bridge]
 
 wifi:
