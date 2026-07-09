@@ -194,6 +194,58 @@ actions:
       message: Welcome home!
 ```
 
+## 🤖 Automating from the Action event entity
+
+With the `keypad_action` (the **Action** `event` entity) configured, Home
+Assistant exposes it as `event.switchbot_keypad_bridge_action`. Its state is the
+timestamp of the last action and its `event_type` attribute is `Lock`, `Unlock`
+or `Doorbell` — so you can automate straight off it, no custom event required.
+
+> The entity id follows your device name: `event.<node_name>_action`. For the
+> default `name: switchbot-keypad-bridge` that's
+> `event.switchbot_keypad_bridge_action`.
+
+**Do something on every unlock:**
+
+```yaml
+alias: Notify on unlock
+triggers:
+  - trigger: state
+    entity_id: event.switchbot_keypad_bridge_action
+conditions:
+  - "{{ trigger.to_state.attributes.event_type == 'Unlock' }}"
+actions:
+  - action: notify.mobile_app_phone
+    data:
+      message: "Door unlocked at {{ now().strftime('%H:%M') }}"
+```
+
+**Flash a light on the doorbell:**
+
+```yaml
+alias: Doorbell → blink the living-room light
+triggers:
+  - trigger: state
+    entity_id: event.switchbot_keypad_bridge_action
+conditions:
+  - "{{ trigger.to_state.attributes.event_type == 'Doorbell' }}"
+actions:
+  - action: light.turn_on
+    target:
+      entity_id: light.living_room
+    data:
+      flash: short
+```
+
+Trigger on the entity's **state change** (a fresh timestamp fires on every
+action) and filter by the `event_type` attribute in the condition. That way two
+identical actions in a row — e.g. Unlock, then Unlock again — both fire, which a
+`to: "Unlock"` attribute trigger would miss because the attribute value didn't
+change.
+
+> Want to know *who* unlocked (method + user name)? Use the `on_unlock`
+> custom-event pattern above, or read the **Last User** text sensor.
+
 ## 🔔 Doorbell (Keypad Vision)
 
 The official app hides the doorbell button until a SwitchBot Lock is bound to
