@@ -519,6 +519,24 @@
   .event-sub { color: var(--sb-support); font-size: 12px; }
   .event-time { color: var(--sb-support); font-size: 12px; white-space: nowrap; }
 
+  /* ── Users editor ── */
+  .users-editor { display: flex; flex-direction: column; gap: 8px; }
+  .user-row { display: flex; gap: 6px; align-items: center; }
+  .user-row input, .user-row select {
+    padding: 9px 10px; border: 1px solid var(--sb-divider);
+    border-radius: var(--radius-input); background: var(--sb-card-bg);
+    color: var(--sb-primary-text); font: inherit; font-size: 14px; min-width: 0;
+  }
+  .user-row .u-name { flex: 1; }
+  .user-row .u-index { width: 62px; text-align: center; }
+  .user-row .u-del {
+    background: transparent; border: none; color: var(--sb-support);
+    font-size: 18px; line-height: 1; cursor: pointer; padding: 6px 8px; flex-shrink: 0;
+  }
+  .user-row .u-del:hover { color: var(--sb-theme); }
+  .users-actions { display: flex; gap: 8px; margin-top: 14px; }
+  .users-actions .btn { flex: 1; }
+
   /* RTL: keep numeric/mac runs LTR inside a right-to-left page. */
   [dir="rtl"] .kp-mac, [dir="rtl"] .event-time { direction: ltr; unicode-bidi: isolate; }
 </style>
@@ -552,6 +570,7 @@
 <nav class="tabbar">
   <button class="tab active" id="tab-pair" type="button" onclick="openPair()">Pair</button>
   <button class="tab" id="tab-activity" type="button" onclick="openActivity()">Activity</button>
+  <button class="tab" id="tab-users" type="button" onclick="openUsers()">Users</button>
 </nav>
 
 <main class="container">
@@ -733,6 +752,20 @@
     <button id="act-refresh" class="btn btn-secondary" type="button" onclick="loadEvents()">↻ Refresh</button>
   </section>
 
+  <!-- ─── Users (credential → name mapping, stored on the device) ─── -->
+  <section id="screen-users" class="screen hidden">
+    <div class="page-header">
+      <h2 id="usr-title">User names</h2>
+      <p class="subtitle" id="usr-subtitle">Name a credential so unlock events show who it was. Find its method &amp; slot number in the Activity tab.</p>
+    </div>
+    <div class="users-editor" id="users-list"></div>
+    <div class="users-actions">
+      <button id="usr-add" class="btn btn-secondary" type="button" onclick="addUserRow()">+ Add</button>
+      <button id="usr-save" class="btn btn-primary" type="button" onclick="saveUsers()">Save</button>
+    </div>
+    <p class="footnote" id="usr-status"></p>
+  </section>
+
 </main>
 
 <script>
@@ -770,6 +803,13 @@
       ev_unlock: 'Unlock', ev_lock: 'Lock', ev_doorbell: 'Doorbell', ago_now: 'just now',
       method_pin: 'PIN', method_fingerprint: 'Fingerprint', method_nfc: 'NFC',
       method_face: 'Face', method_unknown: 'Unknown',
+      tab_users: 'Users', usr_title: 'User names',
+      usr_subtitle: 'Name a credential so unlock events show who it was. Find its method & slot number in the Activity tab.',
+      usr_add: '+ Add', usr_save: 'Save', usr_name_ph: 'Name (e.g. Liran)',
+      usr_del: 'Remove',
+      usr_loading: 'Loading…', usr_saving: 'Saving…', usr_saved: 'Saved.',
+      m_any: 'Any method', m_pin: 'PIN', m_fingerprint: 'Fingerprint',
+      m_face: 'Face', m_nfc: 'NFC', m_unknown: 'Unknown',
     },
     he: {
       topbar: 'גשר קודן', tab_pair: 'צימוד', tab_activity: 'פעילות',
@@ -793,6 +833,13 @@
       ev_unlock: 'פתיחה', ev_lock: 'נעילה', ev_doorbell: 'פעמון', ago_now: 'כרגע',
       method_pin: 'קוד', method_fingerprint: 'טביעת אצבע', method_nfc: 'NFC',
       method_face: 'זיהוי פנים', method_unknown: 'לא ידוע',
+      tab_users: 'משתמשים', usr_title: 'שמות משתמשים',
+      usr_subtitle: 'תן שם לאישור כדי שאירועי הפתיחה יראו מי זה. את השיטה ומספר התא אפשר לראות בלשונית "פעילות".',
+      usr_add: '+ הוסף', usr_save: 'שמור', usr_name_ph: 'שם (למשל ליראן)',
+      usr_del: 'הסר',
+      usr_loading: 'טוען…', usr_saving: 'שומר…', usr_saved: 'נשמר.',
+      m_any: 'כל שיטה', m_pin: 'קוד', m_fingerprint: 'טביעת אצבע',
+      m_face: 'זיהוי פנים', m_nfc: 'NFC', m_unknown: 'לא ידוע',
     },
   };
   // selector -> string key, for the static (non-JS-generated) elements.
@@ -808,6 +855,8 @@
     '#progress-result-error .btn-primary': 'try_again',
     '#act-title': 'act_title', '#act-subtitle': 'act_subtitle',
     '#act-empty': 'act_empty', '#act-refresh': 'act_refresh',
+    '#tab-users': 'tab_users', '#usr-title': 'usr_title',
+    '#usr-subtitle': 'usr_subtitle', '#usr-add': 'usr_add', '#usr-save': 'usr_save',
   };
   let LANG = 'en';
   function t(k) { return (STRINGS[LANG] && STRINGS[LANG][k]) || STRINGS.en[k] || k; }
@@ -824,20 +873,86 @@
     const lb = document.getElementById('lang-btn');
     if (lb) lb.textContent = LANG === 'he' ? 'English' : 'עברית';
     try { localStorage.setItem('kb_lang', LANG); } catch (_) {}
-    // Re-render a visible activity list so its dynamic text follows the language.
+    // Re-render visible dynamic lists so their generated text follows the language.
     if (!document.getElementById('screen-activity').classList.contains('hidden')) loadEvents();
+    if (!document.getElementById('screen-users').classList.contains('hidden')) loadUsers();
   }
   function toggleLang() { applyLang(LANG === 'he' ? 'en' : 'he'); }
 
   /* ── Tabs (Pair | Activity) ─────────────────────────────────────────────── */
   let lastWizardScreen = 'login';
   function updateTabs(name) {
-    const activity = name === 'activity';
-    document.getElementById('tab-pair').classList.toggle('active', !activity);
-    document.getElementById('tab-activity').classList.toggle('active', activity);
+    const active = name === 'activity' ? 'tab-activity'
+                 : name === 'users'    ? 'tab-users'
+                 : 'tab-pair';  // any wizard screen lives under the Pair tab
+    ['tab-pair', 'tab-activity', 'tab-users'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('active', id === active);
+    });
   }
   function openPair() { showScreen(lastWizardScreen || 'login'); }
   function openActivity() { showScreen('activity'); loadEvents(); }
+  function openUsers() { showScreen('users'); loadUsers(); }
+
+  /* ── Users editor (credential → name, stored on the device) ─────────────── */
+  const USER_METHODS = ['any', 'pin', 'fingerprint', 'face', 'nfc', 'unknown'];
+  function methodOptions(selected) {
+    return USER_METHODS.map(m =>
+      '<option value="' + m + '"' + (m === selected ? ' selected' : '') + '>' +
+      escapeHtml(t('m_' + m)) + '</option>').join('');
+  }
+  function addUserRow(u) {
+    u = u || { name: '', method: 'any', index: -1 };
+    const row = document.createElement('div');
+    row.className = 'user-row';
+    row.innerHTML =
+      '<input class="u-name" type="text" value="' + escapeHtml(u.name || '') +
+        '" placeholder="' + escapeHtml(t('usr_name_ph')) + '">' +
+      '<select class="u-method">' + methodOptions(u.method || 'any') + '</select>' +
+      '<input class="u-index" type="number" min="-1" placeholder="#" value="' +
+        (u.index != null ? u.index : -1) + '">' +
+      '<button class="u-del" type="button" title="' + escapeHtml(t('usr_del') || 'Remove') + '">✕</button>';
+    row.querySelector('.u-del').addEventListener('click', () => row.remove());
+    document.getElementById('users-list').appendChild(row);
+  }
+  function setUsrStatus(msg) {
+    const el = document.getElementById('usr-status');
+    if (el) el.textContent = msg || '';
+  }
+  async function loadUsers() {
+    const list = document.getElementById('users-list');
+    list.innerHTML = '';
+    setUsrStatus(t('usr_loading'));
+    try {
+      const users = await api('GET', '/api/users');
+      (Array.isArray(users) ? users : []).forEach(addUserRow);
+      if (!list.children.length) addUserRow();  // one blank row to start
+      setUsrStatus('');
+    } catch (err) {
+      setUsrStatus(err.message);
+    }
+  }
+  async function saveUsers() {
+    const users = [...document.querySelectorAll('#users-list .user-row')].map(r => {
+      const idx = parseInt(r.querySelector('.u-index').value, 10);
+      return {
+        name: r.querySelector('.u-name').value.trim(),
+        method: r.querySelector('.u-method').value,
+        index: Number.isNaN(idx) ? -1 : idx,
+      };
+    }).filter(u => u.name.length > 0);
+    const btn = document.getElementById('usr-save');
+    btn.disabled = true;
+    setUsrStatus(t('usr_saving'));
+    try {
+      await api('POST', '/api/users', users);
+      setUsrStatus(t('usr_saved'));
+    } catch (err) {
+      setUsrStatus(err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
 
   /* ── Activity (event log) ───────────────────────────────────────────────── */
   function timeAgo(ms) {
@@ -908,7 +1023,7 @@
     const btn = [...document.querySelectorAll('.preview-nav button')]
       .find(b => b.textContent.trim().toLowerCase().includes(name.replace('result-', '').replace(/-/g, ' ')));
     if (btn) btn.classList.add('active');
-    if (name !== 'activity') lastWizardScreen = name;
+    if (name !== 'activity' && name !== 'users') lastWizardScreen = name;
     updateTabs(name);
   }
 

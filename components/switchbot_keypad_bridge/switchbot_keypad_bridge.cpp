@@ -163,6 +163,9 @@ void SwitchbotKeypadBridge::setup() {
   this->battery_scan_callbacks_ = new BatteryScanCallbacks(this);
   this->next_battery_scan_at_ = millis() + BATTERY_SCAN_RETRY_MS;
 
+  // Restore user-name mappings edited in the web UI (persisted to NVS).
+  this->load_web_users_();
+
   if (!this->prepare_keys_() || !this->prepare_ble_()) {
     this->mark_failed();
     return;
@@ -173,6 +176,9 @@ void SwitchbotKeypadBridge::setup() {
   this->pairing_ui_.set_shared_key(this->shared_key_);
   this->pairing_ui_.set_credentials(this->web_user_, this->web_pass_);
   this->pairing_ui_.set_events_provider([this]() { return this->events_json_(); });
+  this->pairing_ui_.set_users_get_provider([this]() { return this->web_users_json_(); });
+  this->pairing_ui_.set_users_set_handler(
+      [this](const std::string &body) { return this->set_web_users_json_(body); });
   this->pairing_ui_.set_on_paired_callback(
       [this](const std::string &name, const std::string &mac,
              KeypadFamily family) {
@@ -230,6 +236,12 @@ void SwitchbotKeypadBridge::loop() {
 
     // The web server stays up after pairing — it is the ongoing config console
     // now, not just the one-shot wizard. (Previously it was stopped here.)
+  }
+
+  // Flush web-edited user names to NVS on the main task (the HTTP handler only
+  // stages them + raises the flag, mirroring the pairing hand-off).
+  if (this->web_users_dirty_.exchange(false, std::memory_order_acquire)) {
+    this->save_web_users_();
   }
 
   // Drain the RX queue. Swapping the vector out keeps the critical section
@@ -525,20 +537,152 @@ void SwitchbotKeypadBridge::set_unlock_count_sensor(uint8_t method, sensor::Sens
 std::string SwitchbotKeypadBridge::lookup_user_(UnlockMethod method, int index) const {
   const uint8_t m = static_cast<uint8_t>(method);
   // Prefer the most specific match: exact (method, index) beats a
-  // method-with-any-slot rule, which beats an any-method rule.
-  const UserEntry *best = nullptr;
+  // method-with-any-slot rule, which beats an any-method rule. Two sources
+  // feed this — the web-managed list and the YAML list — and web entries win
+  // ties so a live edit takes precedence over a compile-time default.
   int best_score = -1;
-  for (const auto &u : this->users_) {
-    const bool method_ok = (u.method == 0xFF) || (u.method == m);
-    const bool index_ok = (u.index < 0) || (u.index == index);
-    if (!method_ok || !index_ok) continue;
-    const int score = (u.method != 0xFF ? 2 : 0) + (u.index >= 0 ? 1 : 0);
-    if (score > best_score) {
-      best_score = score;
-      best = &u;
+  std::string best_name;
+  auto scan = [&](const std::vector<UserEntry> &list, bool win_ties) {
+    for (const auto &u : list) {
+      const bool method_ok = (u.method == 0xFF) || (u.method == m);
+      const bool index_ok = (u.index < 0) || (u.index == index);
+      if (!method_ok || !index_ok) continue;
+      const int score = (u.method != 0xFF ? 2 : 0) + (u.index >= 0 ? 1 : 0);
+      if (score > best_score || (win_ties && score == best_score)) {
+        best_score = score;
+        best_name = u.name;
+      }
+    }
+  };
+  {
+    std::lock_guard<std::mutex> lk(this->web_users_mutex_);
+    scan(this->web_users_, /*win_ties=*/true);
+  }
+  scan(this->users_, /*win_ties=*/false);
+  return best_name;
+}
+
+// ---------------------------------------------------------------------------
+// Web-managed user names (editable in the UI, persisted to NVS)
+// ---------------------------------------------------------------------------
+
+static const char *web_method_str(uint8_t m) {
+  switch (m) {
+    case 0x04: return "pin";
+    case 0x08: return "nfc";
+    case 0x0C: return "fingerprint";
+    case 0x18: return "face";
+    case 0xFF: return "any";
+    default:   return "unknown";
+  }
+}
+
+static uint8_t web_method_byte(const char *s) {
+  if (s == nullptr) return 0xFF;
+  if (std::strcmp(s, "pin") == 0) return 0x04;
+  if (std::strcmp(s, "nfc") == 0) return 0x08;
+  if (std::strcmp(s, "fingerprint") == 0) return 0x0C;
+  if (std::strcmp(s, "face") == 0) return 0x18;
+  if (std::strcmp(s, "unknown") == 0) return 0x00;
+  return 0xFF;  // "any" or unrecognised
+}
+
+std::string SwitchbotKeypadBridge::web_users_json_() {
+  cJSON *arr = cJSON_CreateArray();
+  {
+    std::lock_guard<std::mutex> lk(this->web_users_mutex_);
+    for (const auto &u : this->web_users_) {
+      cJSON *o = cJSON_CreateObject();
+      cJSON_AddStringToObject(o, "method", web_method_str(u.method));
+      cJSON_AddNumberToObject(o, "index", u.index);
+      cJSON_AddStringToObject(o, "name", u.name.c_str());
+      cJSON_AddItemToArray(arr, o);
     }
   }
-  return best != nullptr ? best->name : std::string();
+  std::string out = "[]";
+  char *s = cJSON_PrintUnformatted(arr);
+  if (s != nullptr) {
+    out = s;
+    cJSON_free(s);
+  }
+  cJSON_Delete(arr);
+  return out;
+}
+
+bool SwitchbotKeypadBridge::set_web_users_json_(const std::string &json) {
+  cJSON *root = cJSON_ParseWithLength(json.data(), json.size());
+  if (root == nullptr) return false;
+  // Accept either a bare array or {"users": [...]}.
+  cJSON *arr =
+      cJSON_IsArray(root) ? root : cJSON_GetObjectItemCaseSensitive(root, "users");
+  if (!cJSON_IsArray(arr)) {
+    cJSON_Delete(root);
+    return false;
+  }
+  std::vector<UserEntry> parsed;
+  cJSON *it = nullptr;
+  cJSON_ArrayForEach(it, arr) {
+    if (!cJSON_IsObject(it)) continue;
+    cJSON *jn = cJSON_GetObjectItemCaseSensitive(it, "name");
+    if (!cJSON_IsString(jn) || jn->valuestring == nullptr) continue;
+    std::string name = jn->valuestring;
+    if (name.empty()) continue;  // skip blank rows
+    if (name.size() >= WEB_USER_NAME_MAX) name.resize(WEB_USER_NAME_MAX - 1);
+    cJSON *jm = cJSON_GetObjectItemCaseSensitive(it, "method");
+    cJSON *ji = cJSON_GetObjectItemCaseSensitive(it, "index");
+    const uint8_t method = web_method_byte(cJSON_IsString(jm) ? jm->valuestring : "any");
+    const int index = cJSON_IsNumber(ji) ? ji->valueint : -1;
+    parsed.push_back({method, static_cast<int16_t>(index), std::move(name)});
+    if (parsed.size() >= WEB_USERS_MAX) break;
+  }
+  cJSON_Delete(root);
+
+  const size_t n = parsed.size();
+  {
+    std::lock_guard<std::mutex> lk(this->web_users_mutex_);
+    this->web_users_ = std::move(parsed);
+  }
+  this->web_users_dirty_.store(true, std::memory_order_release);
+  ESP_LOGI(TAG, "Web users updated: %u entries, persisting", static_cast<unsigned>(n));
+  return true;
+}
+
+void SwitchbotKeypadBridge::load_web_users_() {
+  this->web_users_pref_ =
+      global_preferences->make_preference<WebUsersBlob>(0x53574255UL /* 'SWBU' */);
+  WebUsersBlob blob{};
+  if (!this->web_users_pref_.load(&blob) || blob.version != 1) return;
+  const uint8_t n = blob.count <= WEB_USERS_MAX ? blob.count : WEB_USERS_MAX;
+  std::lock_guard<std::mutex> lk(this->web_users_mutex_);
+  this->web_users_.clear();
+  for (uint8_t i = 0; i < n; ++i) {
+    const WebUserRec &r = blob.entries[i];
+    char nm[WEB_USER_NAME_MAX];
+    std::memcpy(nm, r.name, WEB_USER_NAME_MAX);
+    nm[WEB_USER_NAME_MAX - 1] = '\0';
+    this->web_users_.push_back({r.method, r.index, std::string(nm)});
+  }
+  ESP_LOGI(TAG, "Loaded %u web user(s) from NVS", static_cast<unsigned>(n));
+}
+
+void SwitchbotKeypadBridge::save_web_users_() {
+  WebUsersBlob blob{};
+  blob.version = 1;
+  {
+    std::lock_guard<std::mutex> lk(this->web_users_mutex_);
+    const size_t n =
+        this->web_users_.size() > WEB_USERS_MAX ? WEB_USERS_MAX : this->web_users_.size();
+    blob.count = static_cast<uint8_t>(n);
+    for (size_t i = 0; i < n; ++i) {
+      const UserEntry &u = this->web_users_[i];
+      blob.entries[i].method = u.method;
+      blob.entries[i].index = u.index;
+      std::strncpy(blob.entries[i].name, u.name.c_str(), WEB_USER_NAME_MAX - 1);
+      blob.entries[i].name[WEB_USER_NAME_MAX - 1] = '\0';
+    }
+  }
+  this->web_users_pref_.save(&blob);
+  global_preferences->sync();
 }
 
 void SwitchbotKeypadBridge::publish_unlock_(UnlockMethod method, int index) {

@@ -9,6 +9,8 @@
 //   POST /api/pair               → {mac} → {job_id, labels: [step names]}
 //   GET  /api/pair/status        → {step, total, message, done, error}
 //   GET  /api/events             → [ {type, ts, ago, method, index, name} ]
+//   GET  /api/users              → [ {method, index, name} ]
+//   POST /api/users              → {ok} | 400   (body: [ {method, index, name} ])
 //
 // The server uses ESP-IDF's `esp_http_server` (already pulled in by NimBLE
 // and the ESP-IDF framework — no extra managed components needed).
@@ -69,6 +71,15 @@ class PairingUi {
     this->events_provider_ = std::move(cb);
   }
 
+  // GET /api/users returns the provider's JSON; POST /api/users hands the raw
+  // body to the handler, which parses + persists and returns true on success.
+  void set_users_get_provider(std::function<std::string()> cb) {
+    this->users_get_provider_ = std::move(cb);
+  }
+  void set_users_set_handler(std::function<bool(const std::string &)> cb) {
+    this->users_set_handler_ = std::move(cb);
+  }
+
   bool is_running() const { return this->server_ != nullptr; }
 
   // Optional HTTP Basic Auth for the whole server. When a password is set,
@@ -106,6 +117,8 @@ class PairingUi {
   static esp_err_t handle_pair_(httpd_req_t *req);
   static esp_err_t handle_pair_status_(httpd_req_t *req);
   static esp_err_t handle_events_(httpd_req_t *req);
+  static esp_err_t handle_users_get_(httpd_req_t *req);
+  static esp_err_t handle_users_set_(httpd_req_t *req);
 
   static esp_err_t reply_json_(httpd_req_t *req, const char *json,
                                const char *status = "200 OK");
@@ -124,6 +137,8 @@ class PairingUi {
   size_t         html_len_{0};
   OnPairedCallback on_paired_cb_;
   std::function<std::string()> events_provider_;
+  std::function<std::string()> users_get_provider_;
+  std::function<bool(const std::string &)> users_set_handler_;
   // Identify the pairing this UI started. The success handler matches
   // Status::job_id against pairing_job_id_ before firing on_paired_cb_,
   // so a previous job's lingering SUCCESS can never apply the wrong

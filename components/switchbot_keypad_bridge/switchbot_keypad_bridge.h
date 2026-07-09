@@ -280,6 +280,32 @@ class SwitchbotKeypadBridge : public Component {
   std::deque<LogEvent> event_log_;
   std::mutex event_log_mutex_;
 
+  // ----- Web-managed user names (editable in the UI, persisted to NVS) --------
+  // Distinct from the compile-time `users_` (YAML): both feed lookup_user_,
+  // with web entries winning ties, so names can be added live without a
+  // reflash. The HTTP task stages edits under web_users_mutex_; the NVS write
+  // is deferred to loop() (main task) via web_users_dirty_.
+  static constexpr size_t WEB_USERS_MAX = 16;
+  static constexpr size_t WEB_USER_NAME_MAX = 24;
+  struct WebUserRec {
+    uint8_t method;   // UnlockMethod byte; 0xFF = any
+    int16_t index;    // -1 = any slot
+    char name[WEB_USER_NAME_MAX];
+  };
+  struct WebUsersBlob {
+    uint8_t version;  // schema tag (currently 1)
+    uint8_t count;
+    WebUserRec entries[WEB_USERS_MAX];
+  };
+  std::vector<UserEntry> web_users_;
+  mutable std::mutex web_users_mutex_;
+  ESPPreferenceObject web_users_pref_;
+  std::atomic<bool> web_users_dirty_{false};
+  std::string web_users_json_();                      // HTTP task: serialise
+  bool set_web_users_json_(const std::string &json);  // HTTP task: parse + stage
+  void load_web_users_();                             // setup: load from NVS
+  void save_web_users_();                             // loop: flush to NVS
+
   // ----- User configuration --------------------------------------------------
 
   // 16-byte AES-128 session key. Generated on first boot, persisted in
