@@ -24,7 +24,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
 from esphome import automation
-from esphome.components import button, event, sensor, text_sensor
+from esphome.components import binary_sensor, button, event, sensor, text_sensor
 from esphome.components.esp32 import (
     add_idf_component,
     add_idf_sdkconfig_option,
@@ -48,7 +48,7 @@ LOGGER = logging.getLogger(__name__)
 
 CODEOWNERS = ["@pierluigizagaria"]
 DEPENDENCIES = ["esp32"]
-AUTO_LOAD = ["event", "text_sensor", "button", "sensor"]
+AUTO_LOAD = ["event", "text_sensor", "button", "sensor", "binary_sensor"]
 MULTI_CONF = False
 
 CONF_KEYPAD_ACTION = "keypad_action"
@@ -72,6 +72,11 @@ CONF_MIN_UNLOCK_INTERVAL = "min_unlock_interval"
 # HTTP Basic Auth for the always-on web console.
 CONF_WEB_USERNAME = "web_username"
 CONF_WEB_PASSWORD = "web_password"
+
+# Keypad liveness / signal diagnostics.
+CONF_RSSI = "rssi"
+CONF_KEYPAD_CONNECTED = "keypad_connected"
+CONF_LAST_SEEN = "last_seen"
 
 # UnlockMethod bytes as the keypad reports them (see lock_protocol.h). 0xFF is
 # the "any method" wildcard used by the users mapping.
@@ -154,6 +159,26 @@ CONFIG_SCHEMA = cv.Schema(
             accuracy_decimals=0,
         ),
         cv.Optional(CONF_BATTERY_SCAN_INTERVAL, default="15min"): _battery_scan_interval,
+        # Keypad BLE signal strength, refreshed by the battery-advert scan.
+        cv.Optional(CONF_RSSI): sensor.sensor_schema(
+            unit_of_measurement="dBm",
+            device_class="signal_strength",
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            accuracy_decimals=0,
+        ),
+        # On during the keypad's short per-action BLE connection.
+        cv.Optional(CONF_KEYPAD_CONNECTED): binary_sensor.binary_sensor_schema(
+            device_class="connectivity",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon="mdi:bluetooth-connect",
+        ),
+        # ISO-8601 UTC timestamp of the last time the keypad was heard (connect
+        # or advert). Add `device_class: timestamp` in YAML for relative display.
+        cv.Optional(CONF_LAST_SEEN): text_sensor.text_sensor_schema(
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon="mdi:clock-outline",
+        ),
         # Display name of the credential behind the most recent unlock, resolved
         # through the `users` mapping (falls back to "<method> #<index>").
         cv.Optional(CONF_LAST_USER): text_sensor.text_sensor_schema(
@@ -297,6 +322,18 @@ async def to_code(config):
     if last_method_conf := config.get(CONF_LAST_METHOD):
         sens = await text_sensor.new_text_sensor(last_method_conf)
         cg.add(var.set_last_method_text_sensor(sens))
+
+    if rssi_conf := config.get(CONF_RSSI):
+        rssi_sensor = await sensor.new_sensor(rssi_conf)
+        cg.add(var.set_rssi_sensor(rssi_sensor))
+
+    if connected_conf := config.get(CONF_KEYPAD_CONNECTED):
+        conn = await binary_sensor.new_binary_sensor(connected_conf)
+        cg.add(var.set_connected_binary_sensor(conn))
+
+    if last_seen_conf := config.get(CONF_LAST_SEEN):
+        seen = await text_sensor.new_text_sensor(last_seen_conf)
+        cg.add(var.set_last_seen_text_sensor(seen))
 
     if counts_conf := config.get(CONF_UNLOCK_COUNTS):
         for method_name in _COUNT_METHODS:

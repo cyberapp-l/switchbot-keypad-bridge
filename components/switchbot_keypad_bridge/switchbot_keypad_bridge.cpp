@@ -266,16 +266,22 @@ void SwitchbotKeypadBridge::loop() {
     if (ev.type == QueuedEvent::CONNECT) {
       ESP_LOGI(TAG, "Keypad connected");
       this->session_.reset();
+      if (this->connected_sensor_ != nullptr) this->connected_sensor_->publish_state(true);
+      this->publish_last_seen_();  // a connection is proof of life
     } else if (ev.type == QueuedEvent::DISCONNECT) {
       ESP_LOGI(TAG, "Keypad disconnected, restarting advertising");
       this->session_.reset();
       NimBLEDevice::startAdvertising();
+      if (this->connected_sensor_ != nullptr) this->connected_sensor_->publish_state(false);
     } else if (ev.type == QueuedEvent::RX) {
       this->on_rx_frame_(ev.frame);
     }
   }
 
-  if (this->battery_level_sensor_ != nullptr) {
+  // The advert scan feeds battery, RSSI and last-seen — run it if any of them
+  // is wired, not just the battery sensor.
+  if (this->battery_level_sensor_ != nullptr || this->rssi_sensor_ != nullptr ||
+      this->last_seen_sensor_ != nullptr) {
     this->apply_pending_battery_();
     this->maybe_start_battery_scan_();
   }
@@ -947,13 +953,26 @@ void SwitchbotKeypadBridge::handle_battery_advert_(const NimBLEAdvertisedDevice 
 
   std::lock_guard<std::mutex> lk(this->rx_mutex_);
   this->battery_advert_value_ = battery;
+  this->battery_advert_rssi_ = adv->getRSSI();
   std::memcpy(this->battery_advert_mac_, mac.data(), mac.size());
   this->battery_advert_family_ = static_cast<uint8_t>(family);
   this->battery_advert_pending_ = true;
 }
 
+void SwitchbotKeypadBridge::publish_last_seen_() {
+  if (this->last_seen_sensor_ == nullptr) return;
+  const time_t now = ::time(nullptr);
+  if (now < 1600000000) return;  // clock not SNTP-synced yet — skip
+  struct tm tm_utc;
+  gmtime_r(&now, &tm_utc);
+  char buf[32];
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S+00:00", &tm_utc);
+  this->last_seen_sensor_->publish_state(buf);
+}
+
 void SwitchbotKeypadBridge::apply_pending_battery_() {
   int value;
+  int rssi;
   uint8_t mac[6];
   uint8_t family;
   {
@@ -961,9 +980,16 @@ void SwitchbotKeypadBridge::apply_pending_battery_() {
     if (!this->battery_advert_pending_) return;
     this->battery_advert_pending_ = false;
     value = this->battery_advert_value_;
+    rssi = this->battery_advert_rssi_;
     std::memcpy(mac, this->battery_advert_mac_, sizeof(mac));
     family = this->battery_advert_family_;
   }
+
+  // Hearing the advert is proof of life: refresh RSSI + last-seen.
+  if (this->rssi_sensor_ != nullptr) {
+    this->rssi_sensor_->publish_state(static_cast<float>(rssi));
+  }
+  this->publish_last_seen_();
 
   if (this->keypad_info_.valid == 0) {
     std::memcpy(this->keypad_info_.mac, mac, sizeof(this->keypad_info_.mac));

@@ -11,6 +11,7 @@
 #include <mutex>
 #include <vector>
 
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
 #include "esphome/components/event/event.h"
 #include "esphome/components/sensor/sensor.h"
@@ -81,6 +82,13 @@ class SwitchbotKeypadBridge : public Component {
   // Per-method running unlock counters (since boot). Any subset may be wired.
   // `method` is the UnlockMethod byte (as sent by the keypad).
   void set_unlock_count_sensor(uint8_t method, sensor::Sensor *s);
+
+  // Keypad liveness / signal, derived from BLE. `rssi` and `last_seen` refresh
+  // from the periodic battery-advert scan (and last_seen also on each connect);
+  // `connected` tracks the short per-action BLE link.
+  void set_rssi_sensor(sensor::Sensor *s) { this->rssi_sensor_ = s; }
+  void set_connected_binary_sensor(binary_sensor::BinarySensor *s) { this->connected_sensor_ = s; }
+  void set_last_seen_text_sensor(text_sensor::TextSensor *s) { this->last_seen_sensor_ = s; }
 
   // Register a (method, index) -> display name mapping from YAML. `method`
   // is the UnlockMethod byte, or 0xFF to match any method; `index` is the
@@ -257,6 +265,12 @@ class SwitchbotKeypadBridge : public Component {
   text_sensor::TextSensor *last_user_sensor_{nullptr};
   text_sensor::TextSensor *last_method_sensor_{nullptr};
 
+  // Keypad liveness / signal.
+  sensor::Sensor *rssi_sensor_{nullptr};
+  binary_sensor::BinarySensor *connected_sensor_{nullptr};
+  text_sensor::TextSensor *last_seen_sensor_{nullptr};
+  void publish_last_seen_();  // main task: publishes an ISO-8601 UTC timestamp
+
   // Per-method unlock counters (since boot) and their optional sensors, keyed
   // by a small dense index (see method_slot_()).
   static constexpr size_t METHOD_SLOTS = 5;  // pin, nfc, fingerprint, face, unknown
@@ -352,6 +366,7 @@ class SwitchbotKeypadBridge : public Component {
   // under rx_mutex_ (same pattern as the RX queue).
   bool battery_advert_pending_{false};
   int battery_advert_value_{-1};
+  int battery_advert_rssi_{0};  // RSSI of the advert that carried the battery
   uint8_t battery_advert_mac_[6]{};
   uint8_t battery_advert_family_{0};
 };

@@ -68,6 +68,15 @@ switchbot_keypad_bridge:
   last_method:
     name: "Last Method"
 
+  # Keypad liveness / signal (diagnostic).
+  rssi:
+    name: "Keypad Signal"
+  keypad_connected:
+    name: "Keypad Connected"
+  last_seen:
+    name: "Keypad Last Seen"
+    device_class: timestamp
+
   # Optional per-method running counters (reset on reboot).
   unlock_counts:
     pin:

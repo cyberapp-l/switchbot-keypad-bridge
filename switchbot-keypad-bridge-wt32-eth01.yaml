@@ -90,6 +90,15 @@ switchbot_keypad_bridge:
   last_method:
     name: "Last Method"
 
+  # Keypad liveness / signal (diagnostic).
+  rssi:
+    name: "Keypad Signal"
+  keypad_connected:
+    name: "Keypad Connected"
+  last_seen:
+    name: "Keypad Last Seen"
+    device_class: timestamp
+
   # Drop duplicate unlocks from the same credential within this window.
   min_unlock_interval: 3s
 
