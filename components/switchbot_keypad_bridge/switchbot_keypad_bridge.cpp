@@ -710,6 +710,9 @@ std::string SwitchbotKeypadBridge::web_settings_json_() {
   cJSON_AddNumberToObject(
       o, "battery_scan_interval_s",
       static_cast<double>(this->battery_scan_interval_ms_.load() / 1000));
+  cJSON_AddNumberToObject(
+      o, "min_unlock_interval_s",
+      static_cast<double>(this->min_unlock_interval_ms_.load() / 1000));
   std::string out = "{}";
   char *s = cJSON_PrintUnformatted(o);
   if (s != nullptr) {
@@ -724,6 +727,7 @@ bool SwitchbotKeypadBridge::set_web_settings_json_(const std::string &json) {
   cJSON *root = cJSON_ParseWithLength(json.data(), json.size());
   if (root == nullptr) return false;
   bool changed = false;
+
   cJSON *bi = cJSON_GetObjectItemCaseSensitive(root, "battery_scan_interval_s");
   if (cJSON_IsNumber(bi)) {
     long secs = static_cast<long>(bi->valuedouble);
@@ -732,30 +736,49 @@ bool SwitchbotKeypadBridge::set_web_settings_json_(const std::string &json) {
     this->battery_scan_interval_ms_.store(static_cast<uint32_t>(secs) * 1000UL);
     changed = true;
   }
+
+  cJSON *mu = cJSON_GetObjectItemCaseSensitive(root, "min_unlock_interval_s");
+  if (cJSON_IsNumber(mu)) {
+    long secs = static_cast<long>(mu->valuedouble);
+    if (secs < 0) secs = 0;           // 0 = debounce off
+    if (secs > 60) secs = 60;         // a debounce beyond a minute makes no sense
+    this->min_unlock_interval_ms_.store(static_cast<uint32_t>(secs) * 1000UL);
+    changed = true;
+  }
+
   cJSON_Delete(root);
   if (changed) {
     this->settings_dirty_.store(true, std::memory_order_release);
-    ESP_LOGI(TAG, "Settings updated: battery_scan_interval=%us",
-             static_cast<unsigned>(this->battery_scan_interval_ms_.load() / 1000));
+    ESP_LOGI(TAG, "Settings updated: battery_scan_interval=%us min_unlock_interval=%us",
+             static_cast<unsigned>(this->battery_scan_interval_ms_.load() / 1000),
+             static_cast<unsigned>(this->min_unlock_interval_ms_.load() / 1000));
   }
   return changed;
 }
 
 void SwitchbotKeypadBridge::load_settings_() {
   this->settings_pref_ =
-      global_preferences->make_preference<uint32_t>(0x53574753UL /* 'SWGS' */);
-  uint32_t ms = 0;
-  // A stored value overrides the YAML default (the user edited it live).
-  if (this->settings_pref_.load(&ms) && ms >= 30000) {
-    this->battery_scan_interval_ms_.store(ms);
-    ESP_LOGI(TAG, "Loaded battery_scan_interval=%us from NVS",
-             static_cast<unsigned>(ms / 1000));
+      global_preferences->make_preference<SettingsBlob>(0x53574753UL /* 'SWGS' */);
+  SettingsBlob blob{};
+  // A stored value overrides the YAML defaults (the user edited it live).
+  if (!this->settings_pref_.load(&blob) || blob.version != 1) return;
+  if (blob.battery_scan_interval_ms >= 30000) {
+    this->battery_scan_interval_ms_.store(blob.battery_scan_interval_ms);
   }
+  if (blob.min_unlock_interval_ms <= 60000) {
+    this->min_unlock_interval_ms_.store(blob.min_unlock_interval_ms);
+  }
+  ESP_LOGI(TAG, "Loaded settings from NVS: battery=%us min_unlock=%us",
+           static_cast<unsigned>(this->battery_scan_interval_ms_.load() / 1000),
+           static_cast<unsigned>(this->min_unlock_interval_ms_.load() / 1000));
 }
 
 void SwitchbotKeypadBridge::save_settings_() {
-  const uint32_t ms = this->battery_scan_interval_ms_.load();
-  this->settings_pref_.save(&ms);
+  SettingsBlob blob{};
+  blob.version = 1;
+  blob.battery_scan_interval_ms = this->battery_scan_interval_ms_.load();
+  blob.min_unlock_interval_ms = this->min_unlock_interval_ms_.load();
+  this->settings_pref_.save(&blob);
   global_preferences->sync();
 }
 

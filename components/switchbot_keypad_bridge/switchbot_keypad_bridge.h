@@ -278,8 +278,9 @@ class SwitchbotKeypadBridge : public Component {
   uint32_t unlock_counts_[METHOD_SLOTS]{};
   static size_t method_slot_(UnlockMethod method);
 
-  // Same-credential unlock debounce.
-  uint32_t min_unlock_interval_ms_{0};
+  // Same-credential unlock debounce. Atomic: editable live from the web
+  // Settings tab (HTTP task) while publish_unlock_ reads it (main task).
+  std::atomic<uint32_t> min_unlock_interval_ms_{0};
   uint32_t last_unlock_ms_{0};
   UnlockMethod last_unlock_method_{UnlockMethod::UNKNOWN};
   int last_unlock_index_{-2};  // -2 = nothing seen yet (distinct from a real -1)
@@ -349,6 +350,12 @@ class SwitchbotKeypadBridge : public Component {
   // main task reads it in maybe_start_battery_scan_(). The NVS write is
   // deferred to loop() via settings_dirty_ (main-task-only writes).
   std::atomic<uint32_t> battery_scan_interval_ms_{15 * 60 * 1000};
+  // Both web-editable settings persist together in one NVS blob.
+  struct SettingsBlob {
+    uint8_t version;  // schema tag (currently 1)
+    uint32_t battery_scan_interval_ms;
+    uint32_t min_unlock_interval_ms;
+  };
   ESPPreferenceObject settings_pref_;
   std::atomic<bool> settings_dirty_{false};
   std::string web_settings_json_();                      // HTTP task: serialise

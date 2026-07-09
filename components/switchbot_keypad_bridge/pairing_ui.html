@@ -786,6 +786,10 @@
       <label for="set-battery" id="set-battery-label">Battery scan interval (seconds, min 30)</label>
       <input id="set-battery" type="number" min="30" step="30" value="900">
     </div>
+    <div class="setting-row">
+      <label for="set-min-unlock" id="set-min-label">Debounce duplicate unlocks (seconds, 0 = off)</label>
+      <input id="set-min-unlock" type="number" min="0" max="60" step="1" value="0">
+    </div>
     <button id="set-save" class="btn btn-primary" type="button" onclick="saveSettings()">Save</button>
     <p class="footnote" id="set-status"></p>
   </section>
@@ -837,6 +841,7 @@
       tab_settings: 'Settings', set_title: 'Settings',
       set_subtitle: 'Device options, saved on the bridge — no reflash needed.',
       set_battery_label: 'Battery scan interval (seconds, min 30)',
+      set_min_label: 'Debounce duplicate unlocks (seconds, 0 = off)',
       set_save: 'Save', set_loading: 'Loading…', set_saving: 'Saving…', set_saved: 'Saved.',
     },
     he: {
@@ -871,6 +876,7 @@
       tab_settings: 'הגדרות', set_title: 'הגדרות',
       set_subtitle: 'אפשרויות מכשיר, נשמרות בגשר — בלי הידור מחדש.',
       set_battery_label: 'תדירות סריקת סוללה (שניות, מינימום 30)',
+      set_min_label: 'השהיית פתיחות כפולות (שניות, 0 = כבוי)',
       set_save: 'שמור', set_loading: 'טוען…', set_saving: 'שומר…', set_saved: 'נשמר.',
     },
   };
@@ -891,7 +897,7 @@
     '#usr-subtitle': 'usr_subtitle', '#usr-add': 'usr_add', '#usr-save': 'usr_save',
     '#tab-settings': 'tab_settings', '#set-title': 'set_title',
     '#set-subtitle': 'set_subtitle', '#set-battery-label': 'set_battery_label',
-    '#set-save': 'set_save',
+    '#set-min-label': 'set_min_label', '#set-save': 'set_save',
   };
   let LANG = 'en';
   function t(k) { return (STRINGS[LANG] && STRINGS[LANG][k]) || STRINGS.en[k] || k; }
@@ -944,20 +950,30 @@
       if (s && s.battery_scan_interval_s != null) {
         document.getElementById('set-battery').value = s.battery_scan_interval_s;
       }
+      if (s && s.min_unlock_interval_s != null) {
+        document.getElementById('set-min-unlock').value = s.min_unlock_interval_s;
+      }
       setSetStatus('');
     } catch (err) {
       setSetStatus(err.message);
     }
   }
   async function saveSettings() {
-    let secs = parseInt(document.getElementById('set-battery').value, 10);
-    if (Number.isNaN(secs) || secs < 30) secs = 30;  // mirror the device floor
+    let battery = parseInt(document.getElementById('set-battery').value, 10);
+    if (Number.isNaN(battery) || battery < 30) battery = 30;  // mirror the device floor
+    let minUnlock = parseInt(document.getElementById('set-min-unlock').value, 10);
+    if (Number.isNaN(minUnlock) || minUnlock < 0) minUnlock = 0;
+    if (minUnlock > 60) minUnlock = 60;
     const btn = document.getElementById('set-save');
     btn.disabled = true;
     setSetStatus(t('set_saving'));
     try {
-      await api('POST', '/api/settings', { battery_scan_interval_s: secs });
-      document.getElementById('set-battery').value = secs;
+      await api('POST', '/api/settings', {
+        battery_scan_interval_s: battery,
+        min_unlock_interval_s: minUnlock,
+      });
+      document.getElementById('set-battery').value = battery;
+      document.getElementById('set-min-unlock').value = minUnlock;
       setSetStatus(t('set_saved'));
     } catch (err) {
       setSetStatus(err.message);
