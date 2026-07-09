@@ -11,6 +11,8 @@
 //   GET  /api/events             → [ {type, ts, ago, method, index, name} ]
 //   GET  /api/users              → [ {method, index, name} ]
 //   POST /api/users              → {ok} | 400   (body: [ {method, index, name} ])
+//   GET  /api/settings           → { battery_scan_interval_s }
+//   POST /api/settings           → {ok} | 400   (body: { battery_scan_interval_s })
 //
 // The server uses ESP-IDF's `esp_http_server` (already pulled in by NimBLE
 // and the ESP-IDF framework — no extra managed components needed).
@@ -80,6 +82,15 @@ class PairingUi {
     this->users_set_handler_ = std::move(cb);
   }
 
+  // GET /api/settings returns the provider's JSON; POST /api/settings hands the
+  // raw body to the handler, which applies + persists and returns true on success.
+  void set_settings_get_provider(std::function<std::string()> cb) {
+    this->settings_get_provider_ = std::move(cb);
+  }
+  void set_settings_set_handler(std::function<bool(const std::string &)> cb) {
+    this->settings_set_handler_ = std::move(cb);
+  }
+
   bool is_running() const { return this->server_ != nullptr; }
 
   // Optional HTTP Basic Auth for the whole server. When a password is set,
@@ -119,6 +130,8 @@ class PairingUi {
   static esp_err_t handle_events_(httpd_req_t *req);
   static esp_err_t handle_users_get_(httpd_req_t *req);
   static esp_err_t handle_users_set_(httpd_req_t *req);
+  static esp_err_t handle_settings_get_(httpd_req_t *req);
+  static esp_err_t handle_settings_set_(httpd_req_t *req);
 
   static esp_err_t reply_json_(httpd_req_t *req, const char *json,
                                const char *status = "200 OK");
@@ -139,6 +152,8 @@ class PairingUi {
   std::function<std::string()> events_provider_;
   std::function<std::string()> users_get_provider_;
   std::function<bool(const std::string &)> users_set_handler_;
+  std::function<std::string()> settings_get_provider_;
+  std::function<bool(const std::string &)> settings_set_handler_;
   // Identify the pairing this UI started. The success handler matches
   // Status::job_id against pairing_job_id_ before firing on_paired_cb_,
   // so a previous job's lingering SUCCESS can never apply the wrong

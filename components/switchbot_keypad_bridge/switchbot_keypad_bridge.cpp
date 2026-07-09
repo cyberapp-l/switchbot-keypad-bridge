@@ -166,6 +166,10 @@ void SwitchbotKeypadBridge::setup() {
   // Restore user-name mappings edited in the web UI (persisted to NVS).
   this->load_web_users_();
 
+  // Restore web-edited settings (e.g. battery scan interval). Overrides the
+  // YAML default, which was already applied via set_battery_scan_interval().
+  this->load_settings_();
+
   if (!this->prepare_keys_() || !this->prepare_ble_()) {
     this->mark_failed();
     return;
@@ -179,6 +183,9 @@ void SwitchbotKeypadBridge::setup() {
   this->pairing_ui_.set_users_get_provider([this]() { return this->web_users_json_(); });
   this->pairing_ui_.set_users_set_handler(
       [this](const std::string &body) { return this->set_web_users_json_(body); });
+  this->pairing_ui_.set_settings_get_provider([this]() { return this->web_settings_json_(); });
+  this->pairing_ui_.set_settings_set_handler(
+      [this](const std::string &body) { return this->set_web_settings_json_(body); });
   this->pairing_ui_.set_on_paired_callback(
       [this](const std::string &name, const std::string &mac,
              KeypadFamily family) {
@@ -242,6 +249,9 @@ void SwitchbotKeypadBridge::loop() {
   // stages them + raises the flag, mirroring the pairing hand-off).
   if (this->web_users_dirty_.exchange(false, std::memory_order_acquire)) {
     this->save_web_users_();
+  }
+  if (this->settings_dirty_.exchange(false, std::memory_order_acquire)) {
+    this->save_settings_();
   }
 
   // Drain the RX queue. Swapping the vector out keeps the critical section
@@ -682,6 +692,64 @@ void SwitchbotKeypadBridge::save_web_users_() {
     }
   }
   this->web_users_pref_.save(&blob);
+  global_preferences->sync();
+}
+
+// ---------------------------------------------------------------------------
+// Web-managed settings (editable in the UI, persisted to NVS)
+// ---------------------------------------------------------------------------
+
+std::string SwitchbotKeypadBridge::web_settings_json_() {
+  cJSON *o = cJSON_CreateObject();
+  cJSON_AddNumberToObject(
+      o, "battery_scan_interval_s",
+      static_cast<double>(this->battery_scan_interval_ms_.load() / 1000));
+  std::string out = "{}";
+  char *s = cJSON_PrintUnformatted(o);
+  if (s != nullptr) {
+    out = s;
+    cJSON_free(s);
+  }
+  cJSON_Delete(o);
+  return out;
+}
+
+bool SwitchbotKeypadBridge::set_web_settings_json_(const std::string &json) {
+  cJSON *root = cJSON_ParseWithLength(json.data(), json.size());
+  if (root == nullptr) return false;
+  bool changed = false;
+  cJSON *bi = cJSON_GetObjectItemCaseSensitive(root, "battery_scan_interval_s");
+  if (cJSON_IsNumber(bi)) {
+    long secs = static_cast<long>(bi->valuedouble);
+    if (secs < 30) secs = 30;         // same floor as the YAML validator
+    if (secs > 86400) secs = 86400;   // cap at 24h
+    this->battery_scan_interval_ms_.store(static_cast<uint32_t>(secs) * 1000UL);
+    changed = true;
+  }
+  cJSON_Delete(root);
+  if (changed) {
+    this->settings_dirty_.store(true, std::memory_order_release);
+    ESP_LOGI(TAG, "Settings updated: battery_scan_interval=%us",
+             static_cast<unsigned>(this->battery_scan_interval_ms_.load() / 1000));
+  }
+  return changed;
+}
+
+void SwitchbotKeypadBridge::load_settings_() {
+  this->settings_pref_ =
+      global_preferences->make_preference<uint32_t>(0x53574753UL /* 'SWGS' */);
+  uint32_t ms = 0;
+  // A stored value overrides the YAML default (the user edited it live).
+  if (this->settings_pref_.load(&ms) && ms >= 30000) {
+    this->battery_scan_interval_ms_.store(ms);
+    ESP_LOGI(TAG, "Loaded battery_scan_interval=%us from NVS",
+             static_cast<unsigned>(ms / 1000));
+  }
+}
+
+void SwitchbotKeypadBridge::save_settings_() {
+  const uint32_t ms = this->battery_scan_interval_ms_.load();
+  this->settings_pref_.save(&ms);
   global_preferences->sync();
 }
 

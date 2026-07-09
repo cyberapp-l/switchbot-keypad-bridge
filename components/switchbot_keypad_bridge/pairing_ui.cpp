@@ -63,6 +63,8 @@ bool PairingUi::start(uint16_t port) {
   reg("/api/events",        HTTP_GET,  PairingUi::handle_events_);
   reg("/api/users",         HTTP_GET,  PairingUi::handle_users_get_);
   reg("/api/users",         HTTP_POST, PairingUi::handle_users_set_);
+  reg("/api/settings",      HTTP_GET,  PairingUi::handle_settings_get_);
+  reg("/api/settings",      HTTP_POST, PairingUi::handle_settings_set_);
 
   ESP_LOGI(TAG, "Pairing UI listening on http://<device>:%u/", port);
   return true;
@@ -461,6 +463,28 @@ esp_err_t PairingUi::handle_users_set_(httpd_req_t *req) {
   const std::string body = read_body_(req);
   if (!self->users_set_handler_ || !self->users_set_handler_(body)) {
     return reply_error_(req, "400 Bad Request", "Could not parse the users list.");
+  }
+  cJSON *resp = cJSON_CreateObject();
+  cJSON_AddBoolToObject(resp, "ok", true);
+  return reply_json_(req, json_take(resp).c_str());
+}
+
+esp_err_t PairingUi::handle_settings_get_(httpd_req_t *req) {
+  if (!require_auth_(req)) return ESP_OK;
+  auto *self = static_cast<PairingUi *>(req->user_ctx);
+  if (!self->settings_get_provider_) {
+    return reply_json_(req, "{}");
+  }
+  const std::string body = self->settings_get_provider_();
+  return reply_json_(req, body.c_str());
+}
+
+esp_err_t PairingUi::handle_settings_set_(httpd_req_t *req) {
+  if (!require_auth_(req)) return ESP_OK;
+  auto *self = static_cast<PairingUi *>(req->user_ctx);
+  const std::string body = read_body_(req);
+  if (!self->settings_set_handler_ || !self->settings_set_handler_(body)) {
+    return reply_error_(req, "400 Bad Request", "Could not apply the settings.");
   }
   cJSON *resp = cJSON_CreateObject();
   cJSON_AddBoolToObject(resp, "ok", true);

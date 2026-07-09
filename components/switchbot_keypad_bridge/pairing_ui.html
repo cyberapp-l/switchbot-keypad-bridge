@@ -537,6 +537,15 @@
   .users-actions { display: flex; gap: 8px; margin-top: 14px; }
   .users-actions .btn { flex: 1; }
 
+  /* ── Settings ── */
+  .setting-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .setting-row label { font-size: 14px; font-weight: 600; }
+  .setting-row input {
+    padding: 9px 10px; border: 1px solid var(--sb-divider);
+    border-radius: var(--radius-input); background: var(--sb-card-bg);
+    color: var(--sb-primary-text); font: inherit; font-size: 14px;
+  }
+
   /* RTL: keep numeric/mac runs LTR inside a right-to-left page. */
   [dir="rtl"] .kp-mac, [dir="rtl"] .event-time { direction: ltr; unicode-bidi: isolate; }
 </style>
@@ -571,6 +580,7 @@
   <button class="tab active" id="tab-pair" type="button" onclick="openPair()">Pair</button>
   <button class="tab" id="tab-activity" type="button" onclick="openActivity()">Activity</button>
   <button class="tab" id="tab-users" type="button" onclick="openUsers()">Users</button>
+  <button class="tab" id="tab-settings" type="button" onclick="openSettings()">Settings</button>
 </nav>
 
 <main class="container">
@@ -766,6 +776,20 @@
     <p class="footnote" id="usr-status"></p>
   </section>
 
+  <!-- ─── Settings (device options, stored on the device) ─── -->
+  <section id="screen-settings" class="screen hidden">
+    <div class="page-header">
+      <h2 id="set-title">Settings</h2>
+      <p class="subtitle" id="set-subtitle">Device options, saved on the bridge — no reflash needed.</p>
+    </div>
+    <div class="setting-row">
+      <label for="set-battery" id="set-battery-label">Battery scan interval (seconds, min 30)</label>
+      <input id="set-battery" type="number" min="30" step="30" value="900">
+    </div>
+    <button id="set-save" class="btn btn-primary" type="button" onclick="saveSettings()">Save</button>
+    <p class="footnote" id="set-status"></p>
+  </section>
+
 </main>
 
 <script>
@@ -810,6 +834,10 @@
       usr_loading: 'Loading…', usr_saving: 'Saving…', usr_saved: 'Saved.',
       m_any: 'Any method', m_pin: 'PIN', m_fingerprint: 'Fingerprint',
       m_face: 'Face', m_nfc: 'NFC', m_unknown: 'Unknown',
+      tab_settings: 'Settings', set_title: 'Settings',
+      set_subtitle: 'Device options, saved on the bridge — no reflash needed.',
+      set_battery_label: 'Battery scan interval (seconds, min 30)',
+      set_save: 'Save', set_loading: 'Loading…', set_saving: 'Saving…', set_saved: 'Saved.',
     },
     he: {
       topbar: 'גשר קודן', tab_pair: 'צימוד', tab_activity: 'פעילות',
@@ -840,6 +868,10 @@
       usr_loading: 'טוען…', usr_saving: 'שומר…', usr_saved: 'נשמר.',
       m_any: 'כל שיטה', m_pin: 'קוד', m_fingerprint: 'טביעת אצבע',
       m_face: 'זיהוי פנים', m_nfc: 'NFC', m_unknown: 'לא ידוע',
+      tab_settings: 'הגדרות', set_title: 'הגדרות',
+      set_subtitle: 'אפשרויות מכשיר, נשמרות בגשר — בלי הידור מחדש.',
+      set_battery_label: 'תדירות סריקת סוללה (שניות, מינימום 30)',
+      set_save: 'שמור', set_loading: 'טוען…', set_saving: 'שומר…', set_saved: 'נשמר.',
     },
   };
   // selector -> string key, for the static (non-JS-generated) elements.
@@ -857,6 +889,9 @@
     '#act-empty': 'act_empty', '#act-refresh': 'act_refresh',
     '#tab-users': 'tab_users', '#usr-title': 'usr_title',
     '#usr-subtitle': 'usr_subtitle', '#usr-add': 'usr_add', '#usr-save': 'usr_save',
+    '#tab-settings': 'tab_settings', '#set-title': 'set_title',
+    '#set-subtitle': 'set_subtitle', '#set-battery-label': 'set_battery_label',
+    '#set-save': 'set_save',
   };
   let LANG = 'en';
   function t(k) { return (STRINGS[LANG] && STRINGS[LANG][k]) || STRINGS.en[k] || k; }
@@ -876,6 +911,7 @@
     // Re-render visible dynamic lists so their generated text follows the language.
     if (!document.getElementById('screen-activity').classList.contains('hidden')) loadEvents();
     if (!document.getElementById('screen-users').classList.contains('hidden')) loadUsers();
+    if (!document.getElementById('screen-settings').classList.contains('hidden')) loadSettings();
   }
   function toggleLang() { applyLang(LANG === 'he' ? 'en' : 'he'); }
 
@@ -884,8 +920,9 @@
   function updateTabs(name) {
     const active = name === 'activity' ? 'tab-activity'
                  : name === 'users'    ? 'tab-users'
+                 : name === 'settings' ? 'tab-settings'
                  : 'tab-pair';  // any wizard screen lives under the Pair tab
-    ['tab-pair', 'tab-activity', 'tab-users'].forEach(id => {
+    ['tab-pair', 'tab-activity', 'tab-users', 'tab-settings'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.classList.toggle('active', id === active);
     });
@@ -893,6 +930,41 @@
   function openPair() { showScreen(lastWizardScreen || 'login'); }
   function openActivity() { showScreen('activity'); loadEvents(); }
   function openUsers() { showScreen('users'); loadUsers(); }
+  function openSettings() { showScreen('settings'); loadSettings(); }
+
+  /* ── Settings (device options, stored on the device) ────────────────────── */
+  function setSetStatus(msg) {
+    const el = document.getElementById('set-status');
+    if (el) el.textContent = msg || '';
+  }
+  async function loadSettings() {
+    setSetStatus(t('set_loading'));
+    try {
+      const s = await api('GET', '/api/settings');
+      if (s && s.battery_scan_interval_s != null) {
+        document.getElementById('set-battery').value = s.battery_scan_interval_s;
+      }
+      setSetStatus('');
+    } catch (err) {
+      setSetStatus(err.message);
+    }
+  }
+  async function saveSettings() {
+    let secs = parseInt(document.getElementById('set-battery').value, 10);
+    if (Number.isNaN(secs) || secs < 30) secs = 30;  // mirror the device floor
+    const btn = document.getElementById('set-save');
+    btn.disabled = true;
+    setSetStatus(t('set_saving'));
+    try {
+      await api('POST', '/api/settings', { battery_scan_interval_s: secs });
+      document.getElementById('set-battery').value = secs;
+      setSetStatus(t('set_saved'));
+    } catch (err) {
+      setSetStatus(err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
 
   /* ── Users editor (credential → name, stored on the device) ─────────────── */
   const USER_METHODS = ['any', 'pin', 'fingerprint', 'face', 'nfc', 'unknown'];
@@ -1023,7 +1095,7 @@
     const btn = [...document.querySelectorAll('.preview-nav button')]
       .find(b => b.textContent.trim().toLowerCase().includes(name.replace('result-', '').replace(/-/g, ' ')));
     if (btn) btn.classList.add('active');
-    if (name !== 'activity' && name !== 'users') lastWizardScreen = name;
+    if (name !== 'activity' && name !== 'users' && name !== 'settings') lastWizardScreen = name;
     updateTabs(name);
   }
 

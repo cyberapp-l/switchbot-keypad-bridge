@@ -331,7 +331,16 @@ class SwitchbotKeypadBridge : public Component {
   KeypadInfo keypad_info_{};
   bool keypad_paired_{false};
 
-  uint32_t battery_scan_interval_ms_{15 * 60 * 1000};
+  // Atomic: the web Settings tab can update it from the HTTP task while the
+  // main task reads it in maybe_start_battery_scan_(). The NVS write is
+  // deferred to loop() via settings_dirty_ (main-task-only writes).
+  std::atomic<uint32_t> battery_scan_interval_ms_{15 * 60 * 1000};
+  ESPPreferenceObject settings_pref_;
+  std::atomic<bool> settings_dirty_{false};
+  std::string web_settings_json_();                      // HTTP task: serialise
+  bool set_web_settings_json_(const std::string &json);  // HTTP task: parse + stage
+  void load_settings_();                                 // setup: load from NVS
+  void save_settings_();                                 // loop: flush to NVS
   uint32_t next_battery_scan_at_{0};  // millis() deadline for the next scan
   // Written by loop(), read by the NimBLE scan callback as its "is this our
   // scan window?" gate — hence atomic.
