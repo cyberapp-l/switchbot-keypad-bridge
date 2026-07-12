@@ -28,15 +28,21 @@ Home Assistant event. The keypad never knows it isn't talking to a real lock.
 - 📟 **Every SwitchBot keypad works** — Keypad, Keypad Touch, Keypad Vision and
   Vision Pro: that's the whole lineup. Touch and Vision are tested on real
   hardware; the other two speak the exact same protocols.
-- 📲 **On-device pairing wizard** — the ESP32 serves a small web page: sign in
-  to your SwitchBot account, pick the keypad, done.
+- 🌐 **On-device web console** — Pair, Activity (event log), Users and Settings
+  tabs, in English or Hebrew (RTL), optionally behind a login.
 - 👤 **Knows who unlocked** — every unlock carries the method (`pin` /
-  `fingerprint` / `nfc` / `face`) and the credential slot, so you can act per user.
+  `fingerprint` / `nfc` / `face`), the credential slot **and a name** you can
+  map in the browser (no reflash).
+- 🚨 **Keypad alarms** (Vision) — **tamper** (pried off the wall), **duress**
+  (panic code), **lockout** (too many wrong tries), **motion** and **charging**,
+  as Home Assistant binary sensors + `on_tamper` / `on_duress` triggers.
 - 🔔 **Doorbell, no lock needed** — on Keypad Vision the doorbell button is
   enabled automatically during pairing (the app normally hides it until a lock
   is bound) and each press fires its own Home Assistant event.
-- 🔋 **Battery monitoring** — the keypad's battery level, exposed as a
-  diagnostic sensor.
+- 🔋 **Battery, signal & liveness** — battery %, RSSI, a "last seen" timestamp
+  and a connected sensor, all read from the keypad's BLE advertisement.
+- 🔌 **Wi-Fi *or* wired Ethernet** — a ready-made WT32-ETH01 (LAN8720) config
+  ships alongside the Wi-Fi one.
 - 🔐 **Keys never leave the device** — the AES-128 session key is generated on
   the ESP32 and stored in NVS; it is never in your YAML or git.
 - 🏠 **100% local after pairing** — the cloud is contacted exactly once, during
@@ -149,6 +155,31 @@ controller).
 > **No PSRAM on the WT32-ETH01.** The bridge runs fine without it; ESPHome
 > will print a one-line "consider enabling PSRAM" note at compile time, which
 > is safe to ignore on this board.
+
+## 🖥️ The web console
+
+The ESP32 serves a small web console at `http://<device-ip>/` — the same page
+that hosts the pairing wizard stays up afterwards as a config console, with
+four tabs:
+
+- **Pair** — the pairing wizard (sign in, pick a keypad). Also used to re-pair.
+- **Activity** — the last lock / unlock / doorbell events the bridge saw, with
+  the method, credential slot and resolved user name, and a relative timestamp.
+- **Users** — map each credential `(method, slot)` to a person's name. Saved on
+  the device (NVS), applied live — **no recompile**. This is what fills the
+  `name` on unlocks (see below).
+- **Settings** — battery scan interval, the unlock debounce, and a **Keypad
+  scanning** toggle you can switch off to save power.
+
+It's bilingual (**English / עברית**, RTL-aware) via the toggle in the top bar.
+
+> **Protect it with a login.** The console is open on your LAN by default. Set a
+> password to require HTTP Basic Auth on every page and endpoint:
+> ```yaml
+> switchbot_keypad_bridge:
+>   web_username: "admin"          # optional, defaults to "admin"
+>   web_password: !secret web_password
+> ```
 
 ## 👤 Knowing who unlocked the door
 
@@ -297,31 +328,111 @@ switchbot_keypad_bridge:
 
 > Vision family only — Original / Touch keypads have no doorbell button.
 
-## 🔋 Keypad battery
+## 🔋 Battery, signal & liveness
 
-The keypad broadcasts its battery level in its BLE advertisement. Add the
-`battery_level` sensor and the bridge picks it up with a short background scan
-(every 15 minutes by default):
+The keypad broadcasts its state in its BLE advertisement; the bridge reads it
+with a short background scan and exposes:
 
 ```yaml
 switchbot_keypad_bridge:
-  battery_level:
-    name: "Keypad Battery"
-  battery_scan_interval: 15min
+  battery_level:    { name: "Keypad Battery" }     # %
+  rssi:             { name: "Keypad Signal" }      # dBm
+  keypad_connected: { name: "Keypad Connected" }   # on during each BLE action
+  last_seen:        { name: "Keypad Last Seen", device_class: timestamp }
+
+  battery_scan_interval: 15min   # min 30s — also settable in the Settings tab
 ```
+
+`last_seen` also updates on every connection, so an automation can alert you if
+the keypad drops off the air (removed, out of range, or a flat battery):
+
+```yaml
+alias: Alert — keypad not seen for a while
+triggers:
+  - trigger: state
+    entity_id: sensor.switchbot_keypad_bridge_keypad_last_seen
+    for: "00:45:00"          # set well above battery_scan_interval
+actions:
+  - action: notify.mobile_app_phone
+    data:
+      message: "⚠️ The keypad hasn't been seen for 45 minutes — check it."
+```
+
+## 🚨 Keypad alarms (Vision)
+
+The Keypad Vision / Vision Pro broadcast alarm and status flags in their
+advertisement. Wire any of them as binary sensors — and **wiring an alarm flips
+the advert scan to near-real-time**, so alarms surface within seconds:
+
+```yaml
+switchbot_keypad_bridge:
+  tamper:   { name: "Keypad Tamper" }    # pried off its mount
+  duress:   { name: "Keypad Duress" }    # a duress / panic code was entered
+  lockout:  { name: "Keypad Lockout" }   # locked out after too many wrong tries
+  motion:   { name: "Keypad Motion" }    # PIR (Vision) / radar (Vision Pro)
+  charging: { name: "Keypad Charging" }
+
+  on_tamper:
+    - homeassistant.event: { event: esphome.switchbot_keypad_tamper }
+  on_duress:
+    - homeassistant.event: { event: esphome.switchbot_keypad_duress }
+```
+
+Example — sound the siren the moment the keypad is tampered with:
+
+```yaml
+alias: Tamper → siren + notify
+triggers:
+  - trigger: event
+    event_type: esphome.switchbot_keypad_tamper
+actions:
+  - action: switch.turn_on
+    target: { entity_id: switch.siren }
+  - action: notify.mobile_app_phone
+    data:
+      message: "🚨 Keypad tamper alarm!"
+```
+
+> **Vision family only.** Original / Touch keypads don't carry these flags — for
+> them only `battery_level` is available.
+>
+> **Power note.** Real-time alarms keep the BLE radio scanning continuously. The
+> bridge is usually mains-powered (especially the Ethernet build), so that's
+> fine — but you can turn scanning off in **Settings** any time.
 
 ## ⚙️ Configuration reference
 
-| Option | Type | Required | Description |
-|---|---|---|---|
-| `keypad_action` | event | no | Standard ESPHome `event` entity for keypad actions. Surfaces in HA as `event.<device>_action` with `Lock` / `Unlock` / `Doorbell` event types. |
-| `keypad` | text_sensor | no | Text sensor whose state is the display name of the paired keypad (Configuration category; empty if none). |
-| `battery_level` | sensor | no | Battery percentage of the paired keypad, read from its BLE advertisement (Diagnostic category). |
-| `battery_scan_interval` | time | no | How often the bridge scans for the keypad's advertisement to refresh `battery_level`. Default `15min`. |
-| `unpair_button` | button | no | Button that forgets the paired keypad, rotates the session key and re-opens the pairing wizard (no reboot). |
-| `on_lock` | automation | no | Triggered on every `lock` command. |
-| `on_unlock` | automation | no | Triggered on every `unlock` command — parameters `(std::string method, int index)`. |
-| `on_doorbell` | automation | no | Triggered on every doorbell press (Keypad Vision). No parameters. |
+All options are optional.
+
+| Option | Type | Description |
+|---|---|---|
+| `keypad_action` | event | ESPHome `event` entity for keypad actions. Surfaces in HA as `event.<device>_action` with `Lock` / `Unlock` / `Doorbell` types. |
+| `keypad` | text_sensor | Display name of the paired keypad (`Unpaired` if none). |
+| **Who unlocked** | | |
+| `last_user` | text_sensor | Resolved name of the last unlock (falls back to `<method> #<index>`). |
+| `last_method` | text_sensor | Method of the last unlock (`pin` / `fingerprint` / `nfc` / `face`). |
+| `unlock_counts` | map | Per-method running counters: `pin` / `nfc` / `fingerprint` / `face` sensors (reset on reboot). |
+| `users` | list | Map credentials to names: `- { name, method, index }`. `method` defaults to `any`, `index` to `-1`; most-specific match wins. Also editable in the Users tab. |
+| `min_unlock_interval` | time | Debounce repeated unlocks from the same credential. `0s` = off. Also in Settings. |
+| **Battery / signal / liveness** | | |
+| `battery_level` | sensor | Keypad battery %. |
+| `rssi` | sensor | Keypad BLE signal strength (dBm). |
+| `keypad_connected` | binary_sensor | On during the keypad's brief per-action BLE connection. |
+| `last_seen` | text_sensor | ISO-8601 UTC timestamp of the last contact (add `device_class: timestamp`). |
+| `battery_scan_interval` | time | How often to scan the advertisement (min `30s`, default `15min`). Also in Settings. |
+| **Alarms (Keypad Vision)** | | |
+| `tamper` / `duress` / `lockout` / `motion` / `charging` | binary_sensor | Alarm & status flags from the Vision advert. Any of them enables near-real-time scanning. |
+| **Web console** | | |
+| `web_username` | string | HTTP Basic Auth username (default `admin`). |
+| `web_password` | string | HTTP Basic Auth password. Omit to leave the console open on the LAN. |
+| **Misc** | | |
+| `unpair_button` | button | Forgets the keypad, rotates the session key, re-opens the wizard (no reboot). |
+| **Triggers** | | |
+| `on_lock` | automation | On every `lock` command. |
+| `on_unlock` | automation | On every unlock — params `(std::string method, int index, std::string name)`. |
+| `on_doorbell` | automation | On every doorbell press (Vision). |
+| `on_tamper` | automation | On the tamper alarm (Vision). |
+| `on_duress` | automation | On the duress/panic code (Vision). |
 
 ## 🔬 Under the hood
 
@@ -338,6 +449,14 @@ switchbot_keypad_bridge:
   API that already ships with ESP-IDF. No extra Python or C++ dependencies —
   but it cannot coexist with ESPHome's own BLE stack (`esp32_ble`,
   `esp32_ble_tracker`, `esp32_improv`, …).
+- **Advertisement parsing** — battery, RSSI, and the Vision alarm/status flags
+  (tamper, duress, lockout, motion, charging) are decoded straight from the
+  keypad's BLE advertisement — a clean-room port of pySwitchbot's `keypad_vision`
+  parser — so they need no cloud and no connection.
+- **Always-on console** — the pairing web server stays up as a config console
+  (Pair / Activity / Users / Settings), guarded by HTTP Basic Auth when a
+  `web_password` is set. It reuses ESPHome's `USE_WEBSERVER` flag so Home
+  Assistant shows a **Visit Device** link.
 - **Key hygiene** — unpairing rotates the session key, so a previously paired
   keypad can no longer command the bridge.
 
