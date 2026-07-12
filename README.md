@@ -505,15 +505,3 @@ radio with ESPHome's BLE stack, so config validation fails fast instead of
 producing a firmware that breaks at runtime. Remove the conflicting components
 (including `esp32_improv`).
 </details>
-
-## ☕ Support
-
-If this project saved you the cost of a SwitchBot Lock — or just made your day —
-consider buying me a coffee. It's a great way to say thanks and keep the work
-going.
-
-<p align="center">
-  <a href="https://buymeacoffee.com/pierluigizagaria">
-    <img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=&slug=pierluigizagaria&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff" alt="Buy Me A Coffee">
-  </a>
-</p>
