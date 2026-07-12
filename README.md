@@ -400,6 +400,12 @@ actions:
 > bridge is usually mains-powered (especially the Ethernet build), so that's
 > fine — but you can turn scanning off in **Settings** any time.
 
+## 📖 More automation recipes
+
+A full cookbook — per-user actions, time-window access, duress/tamper/lockout
+handling, motion, doorbell snapshots, offline & low-battery alerts — lives in
+**[docs/automations.md](docs/automations.md)**.
+
 ## ⚙️ Configuration reference
 
 All options are optional.
