@@ -538,6 +538,11 @@
   .users-actions .btn { flex: 1; }
 
   /* ── Settings ── */
+  .setting-toggle {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .setting-toggle input { width: 18px; height: 18px; flex-shrink: 0; }
   .setting-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
   .setting-row label { font-size: 14px; font-weight: 600; }
   .setting-row input {
@@ -782,6 +787,10 @@
       <h2 id="set-title">Settings</h2>
       <p class="subtitle" id="set-subtitle">Device options, saved on the bridge — no reflash needed.</p>
     </div>
+    <label class="setting-toggle" for="set-scan">
+      <input id="set-scan" type="checkbox" checked>
+      <span id="set-scan-label">Keypad scanning (battery, signal &amp; alarms)</span>
+    </label>
     <div class="setting-row">
       <label for="set-battery" id="set-battery-label">Battery scan interval (seconds, min 30)</label>
       <input id="set-battery" type="number" min="30" step="30" value="900">
@@ -842,6 +851,7 @@
       set_subtitle: 'Device options, saved on the bridge — no reflash needed.',
       set_battery_label: 'Battery scan interval (seconds, min 30)',
       set_min_label: 'Debounce duplicate unlocks (seconds, 0 = off)',
+      set_scan_label: 'Keypad scanning (battery, signal & alarms)',
       set_save: 'Save', set_loading: 'Loading…', set_saving: 'Saving…', set_saved: 'Saved.',
     },
     he: {
@@ -877,6 +887,7 @@
       set_subtitle: 'אפשרויות מכשיר, נשמרות בגשר — בלי הידור מחדש.',
       set_battery_label: 'תדירות סריקת סוללה (שניות, מינימום 30)',
       set_min_label: 'השהיית פתיחות כפולות (שניות, 0 = כבוי)',
+      set_scan_label: 'סריקת הקודן (סוללה, אות ואזעקות)',
       set_save: 'שמור', set_loading: 'טוען…', set_saving: 'שומר…', set_saved: 'נשמר.',
     },
   };
@@ -897,7 +908,8 @@
     '#usr-subtitle': 'usr_subtitle', '#usr-add': 'usr_add', '#usr-save': 'usr_save',
     '#tab-settings': 'tab_settings', '#set-title': 'set_title',
     '#set-subtitle': 'set_subtitle', '#set-battery-label': 'set_battery_label',
-    '#set-min-label': 'set_min_label', '#set-save': 'set_save',
+    '#set-min-label': 'set_min_label', '#set-scan-label': 'set_scan_label',
+    '#set-save': 'set_save',
   };
   let LANG = 'en';
   function t(k) { return (STRINGS[LANG] && STRINGS[LANG][k]) || STRINGS.en[k] || k; }
@@ -953,6 +965,9 @@
       if (s && s.min_unlock_interval_s != null) {
         document.getElementById('set-min-unlock').value = s.min_unlock_interval_s;
       }
+      if (s && s.scan_enabled != null) {
+        document.getElementById('set-scan').checked = !!s.scan_enabled;
+      }
       setSetStatus('');
     } catch (err) {
       setSetStatus(err.message);
@@ -971,6 +986,7 @@
       await api('POST', '/api/settings', {
         battery_scan_interval_s: battery,
         min_unlock_interval_s: minUnlock,
+        scan_enabled: document.getElementById('set-scan').checked,
       });
       document.getElementById('set-battery').value = battery;
       document.getElementById('set-min-unlock').value = minUnlock;

@@ -30,5 +30,19 @@ class DoorbellTrigger : public Trigger<> {
   }
 };
 
+class TamperTrigger : public Trigger<> {
+ public:
+  explicit TamperTrigger(SwitchbotKeypadBridge *parent) {
+    parent->add_on_tamper_callback([this]() { this->trigger(); });
+  }
+};
+
+class DuressTrigger : public Trigger<> {
+ public:
+  explicit DuressTrigger(SwitchbotKeypadBridge *parent) {
+    parent->add_on_duress_callback([this]() { this->trigger(); });
+  }
+};
+
 }  // namespace switchbot_keypad_bridge
 }  // namespace esphome

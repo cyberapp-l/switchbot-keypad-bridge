@@ -90,6 +90,25 @@ class SwitchbotKeypadBridge : public Component {
   void set_connected_binary_sensor(binary_sensor::BinarySensor *s) { this->connected_sensor_ = s; }
   void set_last_seen_text_sensor(text_sensor::TextSensor *s) { this->last_seen_sensor_ = s; }
 
+  // Alarm / status flags decoded from the keypad's advertisement (Vision
+  // family). Any subset may be wired.
+  void set_tamper_binary_sensor(binary_sensor::BinarySensor *s) { this->tamper_sensor_ = s; }
+  void set_duress_binary_sensor(binary_sensor::BinarySensor *s) { this->duress_sensor_ = s; }
+  void set_lockout_binary_sensor(binary_sensor::BinarySensor *s) { this->lockout_sensor_ = s; }
+  void set_motion_binary_sensor(binary_sensor::BinarySensor *s) { this->motion_sensor_ = s; }
+  void set_charging_binary_sensor(binary_sensor::BinarySensor *s) { this->charging_sensor_ = s; }
+
+  // When true, the advert scan runs back-to-back (near real-time) instead of
+  // once per battery_scan_interval — needed to catch tamper/duress promptly.
+  void set_realtime_scan(bool on) { this->realtime_scan_ = on; }
+
+  void add_on_tamper_callback(std::function<void()> &&cb) {
+    this->on_tamper_callbacks_.add(std::move(cb));
+  }
+  void add_on_duress_callback(std::function<void()> &&cb) {
+    this->on_duress_callbacks_.add(std::move(cb));
+  }
+
   // Register a (method, index) -> display name mapping from YAML. `method`
   // is the UnlockMethod byte, or 0xFF to match any method; `index` is the
   // credential slot, or -1 to match any slot of that method.
@@ -271,6 +290,18 @@ class SwitchbotKeypadBridge : public Component {
   text_sensor::TextSensor *last_seen_sensor_{nullptr};
   void publish_last_seen_();  // main task: publishes an ISO-8601 UTC timestamp
 
+  // Alarm / status flags decoded from the Vision advert.
+  binary_sensor::BinarySensor *tamper_sensor_{nullptr};
+  binary_sensor::BinarySensor *duress_sensor_{nullptr};
+  binary_sensor::BinarySensor *lockout_sensor_{nullptr};
+  binary_sensor::BinarySensor *motion_sensor_{nullptr};
+  binary_sensor::BinarySensor *charging_sensor_{nullptr};
+  CallbackManager<void()> on_tamper_callbacks_{};
+  CallbackManager<void()> on_duress_callbacks_{};
+  bool realtime_scan_{false};  // back-to-back advert scans for prompt alarms
+  bool last_tamper_{false};    // rising-edge latch for on_tamper
+  bool last_duress_{false};    // rising-edge latch for on_duress
+
   // Per-method unlock counters (since boot) and their optional sensors, keyed
   // by a small dense index (see method_slot_()).
   static constexpr size_t METHOD_SLOTS = 5;  // pin, nfc, fingerprint, face, unknown
@@ -350,11 +381,15 @@ class SwitchbotKeypadBridge : public Component {
   // main task reads it in maybe_start_battery_scan_(). The NVS write is
   // deferred to loop() via settings_dirty_ (main-task-only writes).
   std::atomic<uint32_t> battery_scan_interval_ms_{15 * 60 * 1000};
-  // Both web-editable settings persist together in one NVS blob.
+  // Whether the advert scan (battery/RSSI/alarms) runs at all. Toggle from the
+  // web Settings tab to save power / radio time.
+  std::atomic<bool> scan_enabled_{true};
+  // All web-editable settings persist together in one NVS blob.
   struct SettingsBlob {
-    uint8_t version;  // schema tag (currently 1)
+    uint8_t version;  // schema tag (currently 2)
     uint32_t battery_scan_interval_ms;
     uint32_t min_unlock_interval_ms;
+    uint8_t scan_enabled;  // 1 = on, 0 = off
   };
   ESPPreferenceObject settings_pref_;
   std::atomic<bool> settings_dirty_{false};
@@ -372,8 +407,8 @@ class SwitchbotKeypadBridge : public Component {
   // Latest advert parsed by the NimBLE scan callback, handed to loop()
   // under rx_mutex_ (same pattern as the RX queue).
   bool battery_advert_pending_{false};
-  int battery_advert_value_{-1};
-  int battery_advert_rssi_{0};  // RSSI of the advert that carried the battery
+  KeypadStatus battery_advert_status_{};  // battery + alarm/status flags
+  int battery_advert_rssi_{0};            // RSSI of the advert
   uint8_t battery_advert_mac_[6]{};
   uint8_t battery_advert_family_{0};
 };

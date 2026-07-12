@@ -78,6 +78,15 @@ CONF_RSSI = "rssi"
 CONF_KEYPAD_CONNECTED = "keypad_connected"
 CONF_LAST_SEEN = "last_seen"
 
+# Alarm / status flags from the Vision advertisement.
+CONF_TAMPER = "tamper"
+CONF_DURESS = "duress"
+CONF_LOCKOUT = "lockout"
+CONF_MOTION = "motion"
+CONF_CHARGING = "charging"
+CONF_ON_TAMPER = "on_tamper"
+CONF_ON_DURESS = "on_duress"
+
 # UnlockMethod bytes as the keypad reports them (see lock_protocol.h). 0xFF is
 # the "any method" wildcard used by the users mapping.
 _UNLOCK_METHOD_BYTES = {
@@ -112,6 +121,12 @@ UnlockTrigger = switchbot_keypad_bridge_ns.class_(
 )
 DoorbellTrigger = switchbot_keypad_bridge_ns.class_(
     "DoorbellTrigger", automation.Trigger.template()
+)
+TamperTrigger = switchbot_keypad_bridge_ns.class_(
+    "TamperTrigger", automation.Trigger.template()
+)
+DuressTrigger = switchbot_keypad_bridge_ns.class_(
+    "DuressTrigger", automation.Trigger.template()
 )
 
 
@@ -179,6 +194,33 @@ CONFIG_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             icon="mdi:clock-outline",
         ),
+        # Alarm / status flags from the Keypad Vision advertisement. Wiring any
+        # of the alarm flags switches the advert scan to near-real-time so the
+        # alarm is caught within seconds.
+        cv.Optional(CONF_TAMPER): binary_sensor.binary_sensor_schema(
+            device_class="tamper",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon="mdi:shield-alert",
+        ),
+        cv.Optional(CONF_DURESS): binary_sensor.binary_sensor_schema(
+            device_class="safety",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon="mdi:account-alert",
+        ),
+        cv.Optional(CONF_LOCKOUT): binary_sensor.binary_sensor_schema(
+            device_class="problem",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon="mdi:lock-alert",
+        ),
+        cv.Optional(CONF_MOTION): binary_sensor.binary_sensor_schema(
+            device_class="motion",
+            icon="mdi:motion-sensor",
+        ),
+        cv.Optional(CONF_CHARGING): binary_sensor.binary_sensor_schema(
+            device_class="battery_charging",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon="mdi:battery-charging",
+        ),
         # Display name of the credential behind the most recent unlock, resolved
         # through the `users` mapping (falls back to "<method> #<index>").
         cv.Optional(CONF_LAST_USER): text_sensor.text_sensor_schema(
@@ -238,6 +280,12 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         cv.Optional(CONF_ON_DOORBELL): automation.validate_automation(
             {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(DoorbellTrigger)}
+        ),
+        cv.Optional(CONF_ON_TAMPER): automation.validate_automation(
+            {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(TamperTrigger)}
+        ),
+        cv.Optional(CONF_ON_DURESS): automation.validate_automation(
+            {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(DuressTrigger)}
         ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -335,6 +383,32 @@ async def to_code(config):
         seen = await text_sensor.new_text_sensor(last_seen_conf)
         cg.add(var.set_last_seen_text_sensor(seen))
 
+    for key, setter in (
+        (CONF_TAMPER, var.set_tamper_binary_sensor),
+        (CONF_DURESS, var.set_duress_binary_sensor),
+        (CONF_LOCKOUT, var.set_lockout_binary_sensor),
+        (CONF_MOTION, var.set_motion_binary_sensor),
+        (CONF_CHARGING, var.set_charging_binary_sensor),
+    ):
+        if flag_conf := config.get(key):
+            bs = await binary_sensor.new_binary_sensor(flag_conf)
+            cg.add(setter(bs))
+
+    # Any alarm flag (or its trigger) needs the advert scan to run near
+    # real-time so the alarm is caught within seconds, not once per interval.
+    if any(
+        k in config
+        for k in (
+            CONF_TAMPER,
+            CONF_DURESS,
+            CONF_LOCKOUT,
+            CONF_MOTION,
+            CONF_ON_TAMPER,
+            CONF_ON_DURESS,
+        )
+    ):
+        cg.add(var.set_realtime_scan(True))
+
     if counts_conf := config.get(CONF_UNLOCK_COUNTS):
         for method_name in _COUNT_METHODS:
             if count_conf := counts_conf.get(method_name):
@@ -392,6 +466,14 @@ async def to_code(config):
         )
 
     for trig_conf in config.get(CONF_ON_DOORBELL, []):
+        trig = cg.new_Pvariable(trig_conf[CONF_TRIGGER_ID], var)
+        await automation.build_automation(trig, [], trig_conf)
+
+    for trig_conf in config.get(CONF_ON_TAMPER, []):
+        trig = cg.new_Pvariable(trig_conf[CONF_TRIGGER_ID], var)
+        await automation.build_automation(trig, [], trig_conf)
+
+    for trig_conf in config.get(CONF_ON_DURESS, []):
         trig = cg.new_Pvariable(trig_conf[CONF_TRIGGER_ID], var)
         await automation.build_automation(trig, [], trig_conf)
 

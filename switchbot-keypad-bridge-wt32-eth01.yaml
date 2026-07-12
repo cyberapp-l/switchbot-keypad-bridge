@@ -99,6 +99,28 @@ switchbot_keypad_bridge:
     name: "Keypad Last Seen"
     device_class: timestamp
 
+  # Alarm / status flags (Keypad Vision only). Wiring any alarm switches the
+  # advert scan to near-real-time so it's caught within seconds.
+  #   tamper  = pried off its mount   duress = a duress/panic code was entered
+  #   lockout = too many wrong tries  motion = PIR/radar  charging = on charger
+  tamper:
+    name: "Keypad Tamper"
+  duress:
+    name: "Keypad Duress"
+  lockout:
+    name: "Keypad Lockout"
+  motion:
+    name: "Keypad Motion"
+  charging:
+    name: "Keypad Charging"
+
+  on_tamper:
+    - homeassistant.event:
+        event: esphome.switchbot_keypad_tamper
+  on_duress:
+    - homeassistant.event:
+        event: esphome.switchbot_keypad_duress
+
   # Drop duplicate unlocks from the same credential within this window.
   min_unlock_interval: 3s
 

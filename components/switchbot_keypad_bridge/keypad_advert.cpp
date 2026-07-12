@@ -87,5 +87,46 @@ int parse_keypad_battery(KeypadFamily family,
   return pct > 100 ? 100 : pct;
 }
 
+KeypadStatus parse_keypad_status(KeypadFamily family,
+                                 const uint8_t *svc_data, size_t svc_len,
+                                 const uint8_t *mfr_data, size_t mfr_len) {
+  KeypadStatus st;
+
+  if (family == KeypadFamily::ORIGINAL) {
+    // Original / Touch: only a battery percentage, in the service data.
+    if (svc_data != nullptr && svc_len >= 3) {
+      const int pct = svc_data[2] & 0x7F;
+      st.battery = pct > 100 ? 100 : pct;
+      st.valid = true;
+    }
+    return st;
+  }
+
+  // VISION / VISION Pro. Our mfr_data keeps the 2-byte company id, so every
+  // pySwitchbot index i is our (i + 2). process_common_mfr_data reads up to
+  // its index 12 (our 14) → require our length >= 15.
+  if (mfr_data == nullptr || mfr_len < 15) return st;
+  if (mfr_data[0] != 0x69 || mfr_data[1] != 0x09) return st;
+
+  const int pct = mfr_data[9] & 0x7F;  // their [7]
+  st.battery = pct > 100 ? 100 : pct;
+  st.charging = (mfr_data[9] & 0x80) != 0;
+
+  const uint8_t alarms = mfr_data[10];  // their [8]
+  st.lockout = (alarms & 0x01) != 0;
+  st.tamper = (alarms & 0x02) != 0;
+  st.duress = (alarms & 0x04) != 0;
+  st.high_temperature = (alarms & 0x40) != 0;
+  st.low_temperature = (alarms & 0x80) != 0;
+
+  // PIR level (Vision) / radar level (Vision Pro): their [13] → our [15].
+  if (mfr_len >= 16) {
+    st.motion = (mfr_data[15] & 0x03) != 0;
+  }
+
+  st.valid = true;
+  return st;
+}
+
 }  // namespace switchbot_keypad_bridge
 }  // namespace esphome

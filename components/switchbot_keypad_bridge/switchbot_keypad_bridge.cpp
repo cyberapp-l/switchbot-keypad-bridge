@@ -278,10 +278,12 @@ void SwitchbotKeypadBridge::loop() {
     }
   }
 
-  // The advert scan feeds battery, RSSI and last-seen — run it if any of them
-  // is wired, not just the battery sensor.
+  // The advert scan feeds battery, RSSI, last-seen and the alarm/status flags —
+  // run it if any advert-derived entity is wired.
   if (this->battery_level_sensor_ != nullptr || this->rssi_sensor_ != nullptr ||
-      this->last_seen_sensor_ != nullptr) {
+      this->last_seen_sensor_ != nullptr || this->tamper_sensor_ != nullptr ||
+      this->duress_sensor_ != nullptr || this->lockout_sensor_ != nullptr ||
+      this->motion_sensor_ != nullptr || this->charging_sensor_ != nullptr) {
     this->apply_pending_battery_();
     this->maybe_start_battery_scan_();
   }
@@ -713,6 +715,7 @@ std::string SwitchbotKeypadBridge::web_settings_json_() {
   cJSON_AddNumberToObject(
       o, "min_unlock_interval_s",
       static_cast<double>(this->min_unlock_interval_ms_.load() / 1000));
+  cJSON_AddBoolToObject(o, "scan_enabled", this->scan_enabled_.load());
   std::string out = "{}";
   char *s = cJSON_PrintUnformatted(o);
   if (s != nullptr) {
@@ -746,12 +749,19 @@ bool SwitchbotKeypadBridge::set_web_settings_json_(const std::string &json) {
     changed = true;
   }
 
+  cJSON *se = cJSON_GetObjectItemCaseSensitive(root, "scan_enabled");
+  if (cJSON_IsBool(se)) {
+    this->scan_enabled_.store(cJSON_IsTrue(se));
+    changed = true;
+  }
+
   cJSON_Delete(root);
   if (changed) {
     this->settings_dirty_.store(true, std::memory_order_release);
-    ESP_LOGI(TAG, "Settings updated: battery_scan_interval=%us min_unlock_interval=%us",
+    ESP_LOGI(TAG, "Settings updated: battery=%us min_unlock=%us scan=%s",
              static_cast<unsigned>(this->battery_scan_interval_ms_.load() / 1000),
-             static_cast<unsigned>(this->min_unlock_interval_ms_.load() / 1000));
+             static_cast<unsigned>(this->min_unlock_interval_ms_.load() / 1000),
+             this->scan_enabled_.load() ? "on" : "off");
   }
   return changed;
 }
@@ -761,23 +771,26 @@ void SwitchbotKeypadBridge::load_settings_() {
       global_preferences->make_preference<SettingsBlob>(0x53574753UL /* 'SWGS' */);
   SettingsBlob blob{};
   // A stored value overrides the YAML defaults (the user edited it live).
-  if (!this->settings_pref_.load(&blob) || blob.version != 1) return;
+  if (!this->settings_pref_.load(&blob) || blob.version != 2) return;
   if (blob.battery_scan_interval_ms >= 30000) {
     this->battery_scan_interval_ms_.store(blob.battery_scan_interval_ms);
   }
   if (blob.min_unlock_interval_ms <= 60000) {
     this->min_unlock_interval_ms_.store(blob.min_unlock_interval_ms);
   }
-  ESP_LOGI(TAG, "Loaded settings from NVS: battery=%us min_unlock=%us",
+  this->scan_enabled_.store(blob.scan_enabled != 0);
+  ESP_LOGI(TAG, "Loaded settings from NVS: battery=%us min_unlock=%us scan=%s",
            static_cast<unsigned>(this->battery_scan_interval_ms_.load() / 1000),
-           static_cast<unsigned>(this->min_unlock_interval_ms_.load() / 1000));
+           static_cast<unsigned>(this->min_unlock_interval_ms_.load() / 1000),
+           this->scan_enabled_.load() ? "on" : "off");
 }
 
 void SwitchbotKeypadBridge::save_settings_() {
   SettingsBlob blob{};
-  blob.version = 1;
+  blob.version = 2;
   blob.battery_scan_interval_ms = this->battery_scan_interval_ms_.load();
   blob.min_unlock_interval_ms = this->min_unlock_interval_ms_.load();
+  blob.scan_enabled = this->scan_enabled_.load() ? 1 : 0;
   this->settings_pref_.save(&blob);
   global_preferences->sync();
 }
@@ -908,8 +921,16 @@ void SwitchbotKeypadBridge::maybe_start_battery_scan_() {
     if (!NimBLEDevice::getScan()->isScanning()) {
       this->battery_scan_active_ = false;
       NimBLEDevice::getScan()->clearResults();
-      this->next_battery_scan_at_ = now + this->battery_scan_interval_ms_;
+      // Real-time mode reopens immediately (back-to-back windows) so alarms
+      // are caught within seconds; otherwise wait a full interval.
+      this->next_battery_scan_at_ =
+          now + (this->realtime_scan_ ? 0 : this->battery_scan_interval_ms_.load());
     }
+    return;
+  }
+
+  // Scanning can be turned off entirely from the web Settings tab to save power.
+  if (!this->scan_enabled_.load(std::memory_order_relaxed)) {
     return;
   }
 
@@ -967,15 +988,15 @@ void SwitchbotKeypadBridge::handle_battery_advert_(const NimBLEAdvertisedDevice 
   if (adv->haveManufacturerData()) {
     mfr = adv->getManufacturerData();
   }
-  const int battery = parse_keypad_battery(
+  const KeypadStatus status = parse_keypad_status(
       family, sd.data(), sd.size(),
       reinterpret_cast<const uint8_t *>(mfr.data()), mfr.size());
-  if (battery < 0) {
+  if (!status.valid) {
     return;
   }
 
   std::lock_guard<std::mutex> lk(this->rx_mutex_);
-  this->battery_advert_value_ = battery;
+  this->battery_advert_status_ = status;
   this->battery_advert_rssi_ = adv->getRSSI();
   std::memcpy(this->battery_advert_mac_, mac.data(), mac.size());
   this->battery_advert_family_ = static_cast<uint8_t>(family);
@@ -994,7 +1015,7 @@ void SwitchbotKeypadBridge::publish_last_seen_() {
 }
 
 void SwitchbotKeypadBridge::apply_pending_battery_() {
-  int value;
+  KeypadStatus status;
   int rssi;
   uint8_t mac[6];
   uint8_t family;
@@ -1002,7 +1023,7 @@ void SwitchbotKeypadBridge::apply_pending_battery_() {
     std::lock_guard<std::mutex> lk(this->rx_mutex_);
     if (!this->battery_advert_pending_) return;
     this->battery_advert_pending_ = false;
-    value = this->battery_advert_value_;
+    status = this->battery_advert_status_;
     rssi = this->battery_advert_rssi_;
     std::memcpy(mac, this->battery_advert_mac_, sizeof(mac));
     family = this->battery_advert_family_;
@@ -1024,15 +1045,39 @@ void SwitchbotKeypadBridge::apply_pending_battery_() {
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   }
 
-  // Got what we came for — close the scan window early.
-  if (this->battery_scan_active_ && NimBLEDevice::getScan()->isScanning()) {
-    NimBLEDevice::getScan()->stop();
+  // Battery.
+  ESP_LOGD(TAG, "Keypad battery: %d%%", status.battery);
+  if (this->battery_level_sensor_ != nullptr && status.battery >= 0 &&
+      status.battery != this->last_battery_) {
+    this->last_battery_ = status.battery;
+    this->battery_level_sensor_->publish_state(static_cast<float>(status.battery));
   }
 
-  ESP_LOGD(TAG, "Keypad battery: %d%%", value);
-  if (this->battery_level_sensor_ != nullptr && value != this->last_battery_) {
-    this->last_battery_ = value;
-    this->battery_level_sensor_->publish_state(static_cast<float>(value));
+  // Status / alarm flags (Vision advert; all false for the Original family).
+  if (this->charging_sensor_ != nullptr) this->charging_sensor_->publish_state(status.charging);
+  if (this->lockout_sensor_ != nullptr) this->lockout_sensor_->publish_state(status.lockout);
+  if (this->motion_sensor_ != nullptr) this->motion_sensor_->publish_state(status.motion);
+  if (this->tamper_sensor_ != nullptr) this->tamper_sensor_->publish_state(status.tamper);
+  if (this->duress_sensor_ != nullptr) this->duress_sensor_->publish_state(status.duress);
+
+  // Fire the alarm triggers on the rising edge only (not every advert while
+  // the flag stays set).
+  if (status.tamper && !this->last_tamper_) {
+    ESP_LOGW(TAG, "Tamper alarm — keypad moved/removed");
+    this->on_tamper_callbacks_.call();
+  }
+  if (status.duress && !this->last_duress_) {
+    ESP_LOGW(TAG, "Duress alarm — duress code entered");
+    this->on_duress_callbacks_.call();
+  }
+  this->last_tamper_ = status.tamper;
+  this->last_duress_ = status.duress;
+
+  // Periodic mode: stop early once we've read an advert (saves the rest of the
+  // window). Real-time mode keeps scanning so alarms are caught promptly.
+  if (!this->realtime_scan_ && this->battery_scan_active_ &&
+      NimBLEDevice::getScan()->isScanning()) {
+    NimBLEDevice::getScan()->stop();
   }
 }
 

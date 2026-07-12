@@ -55,5 +55,26 @@ int parse_keypad_battery(KeypadFamily family,
                          const uint8_t *svc_data, size_t svc_len,
                          const uint8_t *mfr_data, size_t mfr_len);
 
+// Full keypad status decoded from the advertisement, mirroring pySwitchbot's
+// keypad_vision adv parser. The alarm/motion/charging flags are only carried by
+// the VISION family's manufacturer data; for ORIGINAL only `battery` is set.
+struct KeypadStatus {
+  bool valid{false};
+  int battery{-1};          // 0..100, or -1 when absent
+  bool charging{false};
+  bool tamper{false};       // device pried off its mount
+  bool duress{false};       // a duress/panic code was entered
+  bool lockout{false};      // locked out after too many failed attempts
+  bool low_temperature{false};
+  bool high_temperature{false};
+  bool motion{false};       // PIR (Vision) or radar level > 0 (Vision Pro)
+};
+
+// Parse the full status. `mfr_data` is the raw manufacturer payload including
+// the 2-byte company id (0x0969), so every pySwitchbot index i is our i+2.
+KeypadStatus parse_keypad_status(KeypadFamily family,
+                                 const uint8_t *svc_data, size_t svc_len,
+                                 const uint8_t *mfr_data, size_t mfr_len);
+
 }  // namespace switchbot_keypad_bridge
 }  // namespace esphome
