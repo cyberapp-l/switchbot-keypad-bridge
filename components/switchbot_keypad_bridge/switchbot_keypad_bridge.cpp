@@ -991,6 +991,18 @@ void SwitchbotKeypadBridge::handle_battery_advert_(const NimBLEAdvertisedDevice 
   if (adv->haveManufacturerData()) {
     mfr = adv->getManufacturerData();
   }
+
+  // Diagnostic: dump the raw advert of *our* keypad so an unknown field (e.g.
+  // which byte carries PIR/motion on a given unit) can be found by diffing the
+  // idle vs. active capture. DEBUG-only.
+  {
+    static const char hx[] = "0123456789abcdef";
+    std::string sh, mh;
+    for (uint8_t b : sd) { sh.push_back(hx[b >> 4]); sh.push_back(hx[b & 0xF]); }
+    for (unsigned char b : mfr) { mh.push_back(hx[b >> 4]); mh.push_back(hx[b & 0xF]); }
+    ESP_LOGD(TAG, "advert raw: svc=%s mfr=%s", sh.c_str(), mh.c_str());
+  }
+
   const KeypadStatus status = parse_keypad_status(
       family, sd.data(), sd.size(),
       reinterpret_cast<const uint8_t *>(mfr.data()), mfr.size());
