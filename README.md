@@ -361,11 +361,13 @@ actions:
 ## 🚨 Keypad alarms (Vision)
 
 The Keypad Vision / Vision Pro broadcast alarm and status flags in their
-advertisement. Wire any of them as binary sensors — and **wiring an alarm flips
-the advert scan to near-real-time**, so alarms surface within seconds:
+advertisement. Wire any of them as binary sensors — and **wiring an alarm makes
+the advert scan run at `alarm_scan_interval`** (default `30s`) instead of the
+slow battery interval, so alarms surface promptly:
 
 ```yaml
 switchbot_keypad_bridge:
+  alarm_scan_interval: 30s   # min 5s; lower = faster alarms, more radio use
   tamper:   { name: "Keypad Tamper" }    # pried off its mount
   duress:   { name: "Keypad Duress" }    # a duress / panic code was entered
   lockout:  { name: "Keypad Lockout" }   # locked out after too many wrong tries
@@ -396,9 +398,15 @@ actions:
 > **Vision family only.** Original / Touch keypads don't carry these flags — for
 > them only `battery_level` is available.
 >
-> **Power note.** Real-time alarms keep the BLE radio scanning continuously. The
-> bridge is usually mains-powered (especially the Ethernet build), so that's
-> fine — but you can turn scanning off in **Settings** any time.
+> **Power.** The scan is *not* continuous — it runs a brief window every
+> `alarm_scan_interval` and stops as soon as it reads an advert, so the radio
+> isn't pinned on. `battery_level` keeps its own slow `battery_scan_interval`.
+> You can also switch scanning off entirely in the **Settings** tab.
+>
+> **`motion` is best-effort.** The keypad's PIR/radar field is an undocumented
+> 0–3 level, not a clean flag; the bridge treats level ≥ 2 as motion and logs
+> the raw value (`pir=…`) at DEBUG. If it misreads on your unit, capture the
+> `Keypad status: … pir=N` log lines idle vs. moving and tune the threshold.
 
 ## 📖 More automation recipes
 
@@ -427,7 +435,8 @@ All options are optional.
 | `last_seen` | text_sensor | ISO-8601 UTC timestamp of the last contact (add `device_class: timestamp`). |
 | `battery_scan_interval` | time | How often to scan the advertisement (min `30s`, default `15min`). Also in Settings. |
 | **Alarms (Keypad Vision)** | | |
-| `tamper` / `duress` / `lockout` / `motion` / `charging` | binary_sensor | Alarm & status flags from the Vision advert. Any of them enables near-real-time scanning. |
+| `tamper` / `duress` / `lockout` / `motion` / `charging` | binary_sensor | Alarm & status flags from the Vision advert. Wiring any alarm switches the scan to `alarm_scan_interval`. `motion` is best-effort (see above). |
+| `alarm_scan_interval` | time | Advert-scan cadence while alarms are wired (default `30s`, min `5s`) — separate from `battery_scan_interval`. |
 | **Web console** | | |
 | `web_username` | string | HTTP Basic Auth username (default `admin`). |
 | `web_password` | string | HTTP Basic Auth password. Omit to leave the console open on the LAN. |

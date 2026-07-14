@@ -921,10 +921,13 @@ void SwitchbotKeypadBridge::maybe_start_battery_scan_() {
     if (!NimBLEDevice::getScan()->isScanning()) {
       this->battery_scan_active_ = false;
       NimBLEDevice::getScan()->clearResults();
-      // Real-time mode reopens immediately (back-to-back windows) so alarms
-      // are caught within seconds; otherwise wait a full interval.
-      this->next_battery_scan_at_ =
-          now + (this->realtime_scan_ ? 0 : this->battery_scan_interval_ms_.load());
+      // Alarm sensors use their own (shorter) cadence so tamper/duress surface
+      // promptly; battery-only setups keep the slow battery interval. Neither
+      // scans continuously, so the radio isn't pinned on.
+      const uint32_t interval = this->has_alarm_scan_
+                                    ? this->alarm_scan_interval_ms_
+                                    : this->battery_scan_interval_ms_.load();
+      this->next_battery_scan_at_ = now + interval;
     }
     return;
   }
@@ -1045,8 +1048,13 @@ void SwitchbotKeypadBridge::apply_pending_battery_() {
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   }
 
+  // Decoded status (watch pir here to calibrate the motion threshold).
+  ESP_LOGD(TAG,
+           "Keypad status: batt=%d%% chg=%d tamper=%d duress=%d lockout=%d pir=%u",
+           status.battery, status.charging, status.tamper, status.duress,
+           status.lockout, static_cast<unsigned>(status.pir_level));
+
   // Battery.
-  ESP_LOGD(TAG, "Keypad battery: %d%%", status.battery);
   if (this->battery_level_sensor_ != nullptr && status.battery >= 0 &&
       status.battery != this->last_battery_) {
     this->last_battery_ = status.battery;
@@ -1073,10 +1081,9 @@ void SwitchbotKeypadBridge::apply_pending_battery_() {
   this->last_tamper_ = status.tamper;
   this->last_duress_ = status.duress;
 
-  // Periodic mode: stop early once we've read an advert (saves the rest of the
-  // window). Real-time mode keeps scanning so alarms are caught promptly.
-  if (!this->realtime_scan_ && this->battery_scan_active_ &&
-      NimBLEDevice::getScan()->isScanning()) {
+  // Stop early once we've read an advert — saves the rest of the 5 s window;
+  // the next scan reopens after the interval. Keeps the radio off in between.
+  if (this->battery_scan_active_ && NimBLEDevice::getScan()->isScanning()) {
     NimBLEDevice::getScan()->stop();
   }
 }

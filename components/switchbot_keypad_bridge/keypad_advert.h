@@ -67,7 +67,8 @@ struct KeypadStatus {
   bool lockout{false};      // locked out after too many failed attempts
   bool low_temperature{false};
   bool high_temperature{false};
-  bool motion{false};       // PIR (Vision) or radar level > 0 (Vision Pro)
+  bool motion{false};       // derived from pir_level (best-effort, see note)
+  uint8_t pir_level{0};     // raw PIR/radar level 0..3 (Vision); logged for tuning
 };
 
 // Parse the full status. `mfr_data` is the raw manufacturer payload including

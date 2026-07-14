@@ -77,10 +77,12 @@ switchbot_keypad_bridge:
     name: "Keypad Last Seen"
     device_class: timestamp
 
-  # Alarm / status flags (Keypad Vision only). Wiring any alarm switches the
-  # advert scan to near-real-time so it's caught within seconds.
+  # Alarm / status flags (Keypad Vision only). Wiring any alarm makes the advert
+  # scan run at alarm_scan_interval (below) instead of the slow battery interval,
+  # so alarms are caught promptly — while battery scanning stays slow.
   #   tamper  = pried off its mount   duress = a duress/panic code was entered
   #   lockout = too many wrong tries  motion = PIR/radar  charging = on charger
+  alarm_scan_interval: 30s   # min 5s; lower = faster alarms, more radio use
   tamper:
     name: "Keypad Tamper"
   duress:

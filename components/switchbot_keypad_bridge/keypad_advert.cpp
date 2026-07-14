@@ -120,8 +120,12 @@ KeypadStatus parse_keypad_status(KeypadFamily family,
   st.low_temperature = (alarms & 0x80) != 0;
 
   // PIR level (Vision) / radar level (Vision Pro): their [13] → our [15].
+  // This is a 0..3 level, not a clean flag, and is undocumented — expose the
+  // raw level for tuning and treat only the upper levels as "motion" so the
+  // sensor isn't stuck on at an idle baseline.
   if (mfr_len >= 16) {
-    st.motion = (mfr_data[15] & 0x03) != 0;
+    st.pir_level = mfr_data[15] & 0x03;
+    st.motion = st.pir_level >= 2;
   }
 
   st.valid = true;

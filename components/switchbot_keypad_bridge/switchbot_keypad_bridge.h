@@ -98,9 +98,12 @@ class SwitchbotKeypadBridge : public Component {
   void set_motion_binary_sensor(binary_sensor::BinarySensor *s) { this->motion_sensor_ = s; }
   void set_charging_binary_sensor(binary_sensor::BinarySensor *s) { this->charging_sensor_ = s; }
 
-  // When true, the advert scan runs back-to-back (near real-time) instead of
-  // once per battery_scan_interval — needed to catch tamper/duress promptly.
-  void set_realtime_scan(bool on) { this->realtime_scan_ = on; }
+  // Advert-scan cadence for the alarm/status flags. When alarm sensors are
+  // wired, the scan runs at this (shorter) interval instead of
+  // battery_scan_interval — so battery scanning stays slow while alarms are
+  // still caught reasonably promptly, without a power-hungry continuous scan.
+  void set_alarm_scan_interval(uint32_t ms) { this->alarm_scan_interval_ms_ = ms; }
+  void set_has_alarm_scan(bool on) { this->has_alarm_scan_ = on; }
 
   void add_on_tamper_callback(std::function<void()> &&cb) {
     this->on_tamper_callbacks_.add(std::move(cb));
@@ -298,7 +301,8 @@ class SwitchbotKeypadBridge : public Component {
   binary_sensor::BinarySensor *charging_sensor_{nullptr};
   CallbackManager<void()> on_tamper_callbacks_{};
   CallbackManager<void()> on_duress_callbacks_{};
-  bool realtime_scan_{false};  // back-to-back advert scans for prompt alarms
+  uint32_t alarm_scan_interval_ms_{30000};  // advert cadence when alarms wired
+  bool has_alarm_scan_{false};              // any tamper/duress/lockout/motion sensor
   bool last_tamper_{false};    // rising-edge latch for on_tamper
   bool last_duress_{false};    // rising-edge latch for on_duress
 
