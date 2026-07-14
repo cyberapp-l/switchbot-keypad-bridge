@@ -921,13 +921,9 @@ void SwitchbotKeypadBridge::maybe_start_battery_scan_() {
     if (!NimBLEDevice::getScan()->isScanning()) {
       this->battery_scan_active_ = false;
       NimBLEDevice::getScan()->clearResults();
-      // Alarm sensors use their own (shorter) cadence so tamper/duress surface
-      // promptly; battery-only setups keep the slow battery interval. Neither
-      // scans continuously, so the radio isn't pinned on.
-      const uint32_t interval = this->has_alarm_scan_
-                                    ? this->alarm_scan_interval_ms_
-                                    : this->battery_scan_interval_ms_.load();
-      this->next_battery_scan_at_ = now + interval;
+      // One cadence for everything (battery, RSSI, alarm flags). Lower
+      // battery_scan_interval if you want the alarm flags picked up sooner.
+      this->next_battery_scan_at_ = now + this->battery_scan_interval_ms_.load();
     }
     return;
   }

@@ -86,7 +86,6 @@ CONF_MOTION = "motion"
 CONF_CHARGING = "charging"
 CONF_ON_TAMPER = "on_tamper"
 CONF_ON_DURESS = "on_duress"
-CONF_ALARM_SCAN_INTERVAL = "alarm_scan_interval"
 
 # UnlockMethod bytes as the keypad reports them (see lock_protocol.h). 0xFF is
 # the "any method" wildcard used by the users mapping.
@@ -157,15 +156,6 @@ def _battery_scan_interval(value):
     return value
 
 
-def _alarm_scan_interval(value):
-    """The alarm advert cadence — shorter than the battery scan so tamper/duress
-    surface promptly, but floored so it can't pin the radio on."""
-    value = cv.positive_time_period_milliseconds(value)
-    if value.total_milliseconds < 5000:
-        raise cv.Invalid("alarm_scan_interval must be at least 5s.")
-    return value
-
-
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(SwitchbotKeypadBridge),
@@ -184,7 +174,6 @@ CONFIG_SCHEMA = cv.Schema(
             accuracy_decimals=0,
         ),
         cv.Optional(CONF_BATTERY_SCAN_INTERVAL, default="15min"): _battery_scan_interval,
-        cv.Optional(CONF_ALARM_SCAN_INTERVAL, default="30s"): _alarm_scan_interval,
         # Keypad BLE signal strength, refreshed by the battery-advert scan.
         cv.Optional(CONF_RSSI): sensor.sensor_schema(
             unit_of_measurement="dBm",
@@ -404,25 +393,6 @@ async def to_code(config):
         if flag_conf := config.get(key):
             bs = await binary_sensor.new_binary_sensor(flag_conf)
             cg.add(setter(bs))
-
-    # Any alarm flag (or its trigger) switches the advert scan to its own
-    # (shorter) cadence so alarms surface promptly — without pinning the radio
-    # on, and keeping the battery scan slow.
-    cg.add(
-        var.set_alarm_scan_interval(config[CONF_ALARM_SCAN_INTERVAL].total_milliseconds)
-    )
-    if any(
-        k in config
-        for k in (
-            CONF_TAMPER,
-            CONF_DURESS,
-            CONF_LOCKOUT,
-            CONF_MOTION,
-            CONF_ON_TAMPER,
-            CONF_ON_DURESS,
-        )
-    ):
-        cg.add(var.set_has_alarm_scan(True))
 
     if counts_conf := config.get(CONF_UNLOCK_COUNTS):
         for method_name in _COUNT_METHODS:
