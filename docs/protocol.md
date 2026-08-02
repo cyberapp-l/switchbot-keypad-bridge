@@ -116,17 +116,34 @@ Seen in the settings capture (`0f 52 01 <param> <value>` / `0f 53 01 <param>`):
 
 The `switchbot_keypad_bridge.send_command` action connects as a BLE central,
 negotiates an IV, sends one raw plaintext command, then decrypts and logs the
-reply. Example — set volume to medium:
+reply.
+
+### Which key encrypts the command
+
+This is the part that trips people up. The keypad has **two** command channels,
+each with its own key:
+
+| `key` / `key_id` you pass | Key used | Default `key_id` | Channel |
+|---|---|---|---|
+| both empty | the bridge's **session key** (`shared_key_`) | `0xC6` Vision / `0x88` Original | lock-emulation (keypad ↔ bridge) |
+| `key` set  | the key you pass | `0x45` | app / cloud channel |
+
+The **app-style settings** commands (`0f52`/`0f53` — volume, feature toggles)
+were captured on the **communication key (K14)** at **`key_id` 0x45**, *not* the
+lock-emulation channel. So to replay them you must pass your K14 explicitly:
 
 ```yaml
 on_...:
   - switchbot_keypad_bridge.send_command:
-      command: "0f52010c0202"   # SET param 0x0c = 02 (medium?), tag 02
-      # key/key_id default to the paired communication key
+      command: "0f52010c0202"                     # SET 0x0c = 02 (medium?), tag 02
+      key: "0286…"                                # your K14 (32 hex chars)
+      key_id: 0x45
 ```
 
-Leave `key`/`key_id` unset to reuse the paired key. The decrypted response is
-logged at `WARN` as `send_command: … decrypted=<hex>`.
+Leaving `key` empty uses the bridge's own session key and slot — good for
+lock/unlock-style traffic, but the keypad may not honour settings writes there.
+The decrypted response is logged at `WARN` as `send_command: … decrypted=<hex>`.
+Get your K14 from `show_communication_key` (web console → **Settings**).
 
 ### Calling it from Home Assistant
 
@@ -141,13 +158,19 @@ api:
     - action: send_keypad_command
       variables:
         command: string
+        key: string   # optional 32-hex K14; empty = bridge session key
+        key_id: int    # optional; 69 = 0x45 (app channel), 0 = auto
       then:
         - switchbot_keypad_bridge.send_command:
             command: !lambda "return command;"
+            key: !lambda "return key;"
+            key_id: !lambda "return key_id;"
 ```
 
-That surfaces `esphome.<device>_send_keypad_command`, taking a `command` hex
-string. (The WT32-ETH01 example config ships this wrapper.)
+That surfaces `esphome.<device>_send_keypad_command`, taking `command` (hex) plus
+optional `key` (your K14) and `key_id` (`69` for the 0x45 app channel). Leave
+`key`/`key_id` blank for the session-key channel. (The WT32-ETH01 example config
+ships this wrapper.)
 
 ## Reproducing a capture
 

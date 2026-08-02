@@ -60,16 +60,28 @@ api:
   # Exposes a Home Assistant service `esphome.<device>_send_keypad_command`.
   # (switchbot_keypad_bridge.send_command is an ESPHome *action* — a YAML
   # building block — so it is NOT itself an HA service; this wrapper makes it
-  # one.) Call it from HA → Developer Tools → Actions with a hex command, e.g.
+  # one.) Call it from HA → Developer Tools → Actions, e.g.
   #   command: "0f52010c0202"   # volume — hypothesis, see docs/protocol.md
+  #
+  # WHICH KEY encrypts the command matters:
+  #   • Leave key/key_id empty → the bridge's own session key (lock-emulation
+  #     channel, slot 0xC6/0x88). Fine for lock/unlock-style commands.
+  #   • App-style settings (0f52/0f53 — volume, etc.) were captured on the
+  #     keypad's *communication key* (K14) at key_id 0x45. To replay those,
+  #     pass your K14 as `key` and key_id: 69 (0x45). Get K14 via
+  #     show_communication_key (web console → Settings). It is a secret.
   # The decrypted reply is logged at WARN (send_command: … decrypted=…).
   actions:
     - action: send_keypad_command
       variables:
         command: string
+        key: string # optional: 32-hex K14; empty = bridge session key
+        key_id: int # optional: 69 = 0x45 (app channel); 0 = auto
       then:
         - switchbot_keypad_bridge.send_command:
             command: !lambda "return command;"
+            key: !lambda "return key;"
+            key_id: !lambda "return key_id;"
 
 ota:
   - platform: esphome
@@ -173,11 +185,13 @@ switchbot_keypad_bridge:
 # Experiment helper for the raw-command action (see docs/protocol.md). It never
 # runs on its own — call `keypad_set_volume` from the API / HA dev tools to try
 # the (unverified) volume command and watch the decrypted reply in the log.
-# `key`/`key_id` are omitted, so it reuses the paired communication key.
+# Volume was captured on the K14 / key_id 0x45 channel, so pass your K14 as the
+# `key` parameter (empty would fall back to the bridge's session key instead).
 script:
   - id: keypad_set_volume
     parameters:
       level: int # 1 = low, 2 = medium, 3 = high
+      key: string # your K14 (32 hex chars); needed for this settings command
     then:
       - switchbot_keypad_bridge.send_command:
           # 0f 52 01 0c <level> 02  — volume SET (hypothesis; verify on hardware)
@@ -185,3 +199,5 @@ script:
             char buf[13];
             sprintf(buf, "0f52010c0%d02", level);
             return std::string(buf);
+          key: !lambda "return key;"
+          key_id: 0x45
