@@ -66,6 +66,10 @@ class KeypadPairer {
     std::vector<uint8_t>         key;              // 16-byte AES-CTR key from cloud
     std::array<uint8_t, 16>      shared_token{};   // the random key we inject
     std::array<uint8_t, 6>       esp_mac{};        // our BLE peripheral address
+    // Experiments: when non-empty, skip the pairing sequence and just connect,
+    // negotiate an IV, send this one plaintext command (encrypted with `key`
+    // at `key_id`), log the decrypted response, and disconnect.
+    std::vector<uint8_t>         raw_command;
   };
 
   // Spawns the pairing task and returns a job id. If a job is already
@@ -115,6 +119,7 @@ class KeypadPairer {
   uint8_t              key_id_{0};
   std::array<uint8_t, 16> iv_{};            // session IV; valid once iv_received_
   std::atomic<bool>    iv_received_{false};
+  std::vector<uint8_t> last_notify_;        // most recent TX notification (raw mode)
 };
 
 }  // namespace switchbot_keypad_bridge

@@ -135,6 +135,13 @@ class SwitchbotKeypadBridge : public Component {
   // re-opens the pairing wizard — no reboot. Invoked by UnpairButton.
   void unpair();
 
+  // Experiments (switchbot_keypad_bridge.send_command action): send one raw
+  // plaintext command (hex) to the paired keypad. `key_hex` is the 16-byte AES
+  // key (default: the bridge's own session key); `key_id` selects the slot
+  // (default: 0x45 when a key is given, else the family slot). Logs the reply.
+  void send_raw_command(const std::string &command_hex, const std::string &key_hex,
+                        int key_id);
+
   void add_on_lock_callback(std::function<void()> &&callback) {
     this->on_lock_callbacks_.add(std::move(callback));
   }

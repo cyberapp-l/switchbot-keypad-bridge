@@ -267,6 +267,11 @@ void KeypadPairer::on_notify_(const uint8_t *data, size_t length) {
     std::memcpy(this->iv_.data(), data + 4, 16);
     this->iv_received_.store(true);
   }
+  // Keep the latest notification so a raw-command run can log the response.
+  {
+    std::lock_guard<std::mutex> lk(this->mu_);
+    this->last_notify_.assign(data, data + length);
+  }
   if (this->ack_sem_ != nullptr) {
     xSemaphoreGive(this->ack_sem_);
   }
@@ -391,6 +396,38 @@ void KeypadPairer::execute_(Request &req) {
     client->disconnect();
     NimBLEDevice::deleteClient(client);
     this->set_failed_("Keypad did not open a session. Reset it into pairing mode and retry.");
+    return;
+  }
+
+  // Raw-command mode (experiments): send the single command, log the decrypted
+  // response, and stop — no pairing sequence.
+  if (!req.raw_command.empty()) {
+    static const char hx[] = "0123456789abcdef";
+    { std::lock_guard<std::mutex> lk(this->mu_); this->last_notify_.clear(); }
+    const bool ok =
+        this->send_command_(rx, req.raw_command.data(), req.raw_command.size());
+
+    std::vector<uint8_t> resp;
+    { std::lock_guard<std::mutex> lk(this->mu_); resp = this->last_notify_; }
+    std::string resp_hex, dec_hex;
+    for (uint8_t b : resp) { resp_hex.push_back(hx[b >> 4]); resp_hex.push_back(hx[b & 0x0F]); }
+    if (resp.size() > 4) {  // strip the 4-byte header, AES-CTR-decrypt the rest
+      std::vector<uint8_t> pt(resp.size() - 4);
+      if (aes_ctr_xcrypt_raw_key(this->key_.data(), this->iv_.data(),
+                                 resp.data() + 4, pt.data(), pt.size())) {
+        for (uint8_t b : pt) { dec_hex.push_back(hx[b >> 4]); dec_hex.push_back(hx[b & 0x0F]); }
+      }
+    }
+    ESP_LOGW(TAG, "send_command: write=%s response raw=%s decrypted=%s",
+             ok ? "ok" : "FAILED", resp_hex.c_str(), dec_hex.c_str());
+
+    client->disconnect();
+    NimBLEDevice::deleteClient(client);
+    if (ok) {
+      this->set_success_(req.keypad_mac, family);
+    } else {
+      this->set_failed_("send_command write failed");
+    }
     return;
   }
 

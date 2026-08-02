@@ -104,6 +104,13 @@ class PairingUi {
   // Opt-in debug: log the keypad's communication key (key_id + K14) at pairing.
   void set_log_keys(bool on) { this->log_keys_ = on; }
 
+  // Experiments: connect to the keypad and send one raw plaintext command
+  // (encrypted with `key` at `key_id`), logging the decrypted response. Returns
+  // false if a pairing/command job is already running.
+  bool start_raw_command(const std::string &mac, KeypadFamily family, int key_id,
+                         const std::vector<uint8_t> &key,
+                         const std::vector<uint8_t> &plaintext);
+
   // True while a blocking BLE scan started by the pairing flow is in progress.
   // The component's battery scan checks this to avoid fighting over the shared
   // NimBLE scan singleton now that the server stays up permanently.

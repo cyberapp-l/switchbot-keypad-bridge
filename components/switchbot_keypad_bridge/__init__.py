@@ -76,6 +76,11 @@ CONF_WEB_PASSWORD = "web_password"
 # Opt-in debug: expose the keypad's communication key (key_id + K14).
 CONF_SHOW_COMMUNICATION_KEY = "show_communication_key"
 
+# send_command action (experiments).
+CONF_COMMAND = "command"
+CONF_KEY = "key"
+CONF_KEY_ID = "key_id"
+
 # Keypad liveness / signal diagnostics.
 CONF_RSSI = "rssi"
 CONF_KEYPAD_CONNECTED = "keypad_connected"
@@ -130,6 +135,9 @@ TamperTrigger = switchbot_keypad_bridge_ns.class_(
 )
 DuressTrigger = switchbot_keypad_bridge_ns.class_(
     "DuressTrigger", automation.Trigger.template()
+)
+SendCommandAction = switchbot_keypad_bridge_ns.class_(
+    "SendCommandAction", automation.Action
 )
 
 
@@ -338,6 +346,29 @@ def _final_validate(config):
 
 
 FINAL_VALIDATE_SCHEMA = _final_validate
+
+
+@automation.register_action(
+    "switchbot_keypad_bridge.send_command",
+    SendCommandAction,
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.use_id(SwitchbotKeypadBridge),
+            cv.Required(CONF_COMMAND): cv.templatable(cv.string_strict),
+            cv.Optional(CONF_KEY, default=""): cv.templatable(cv.string),
+            cv.Optional(CONF_KEY_ID, default=0): cv.templatable(cv.hex_int),
+        }
+    ),
+)
+async def send_command_action_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    cmd = await cg.templatable(config[CONF_COMMAND], args, cg.std_string)
+    cg.add(var.set_command(cmd))
+    key = await cg.templatable(config[CONF_KEY], args, cg.std_string)
+    cg.add(var.set_key(key))
+    key_id = await cg.templatable(config[CONF_KEY_ID], args, cg.int_)
+    cg.add(var.set_key_id(key_id))
 
 
 async def to_code(config):

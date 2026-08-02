@@ -348,6 +348,65 @@ void UnpairButton::press_action() {
   this->parent_->unpair();
 }
 
+namespace {
+bool unhex_(const std::string &s, std::vector<uint8_t> &out) {
+  if (s.empty() || s.size() % 2 != 0) return false;
+  auto nib = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+  };
+  out.clear();
+  for (size_t i = 0; i < s.size(); i += 2) {
+    const int hi = nib(s[i]), lo = nib(s[i + 1]);
+    if (hi < 0 || lo < 0) return false;
+    out.push_back(static_cast<uint8_t>((hi << 4) | lo));
+  }
+  return true;
+}
+}  // namespace
+
+void SwitchbotKeypadBridge::send_raw_command(const std::string &command_hex,
+                                             const std::string &key_hex, int key_id) {
+  if (this->keypad_info_.valid == 0) {
+    ESP_LOGW(TAG, "send_command: no keypad paired");
+    return;
+  }
+  std::vector<uint8_t> cmd;
+  if (!unhex_(command_hex, cmd)) {
+    ESP_LOGW(TAG, "send_command: invalid command hex '%s'", command_hex.c_str());
+    return;
+  }
+
+  std::vector<uint8_t> key;
+  if (!key_hex.empty()) {
+    if (!unhex_(key_hex, key) || key.size() != 16) {
+      ESP_LOGW(TAG, "send_command: key must be 16 bytes (32 hex chars)");
+      return;
+    }
+  } else {
+    key.assign(this->shared_key_.begin(), this->shared_key_.end());
+  }
+
+  const KeypadFamily family = static_cast<KeypadFamily>(this->keypad_info_.family);
+  int kid = key_id;
+  if (kid == 0) {
+    kid = key_hex.empty() ? (family == KeypadFamily::VISION ? 0xC6 : 0x88) : 0x45;
+  }
+
+  const uint8_t *m = this->keypad_info_.mac;
+  char mac[18];
+  std::snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", m[0], m[1], m[2], m[3],
+                m[4], m[5]);
+
+  ESP_LOGW(TAG, "send_command: %s -> %s (key_id=0x%02X, %s key)", command_hex.c_str(), mac,
+           kid, key_hex.empty() ? "session" : "custom");
+  if (!this->pairing_ui_.start_raw_command(mac, family, kid, key, cmd)) {
+    ESP_LOGW(TAG, "send_command: could not start (a job is already running?)");
+  }
+}
+
 void SwitchbotKeypadBridge::dump_config() {
   ESP_LOGCONFIG(TAG, "SwitchBot Keypad Bridge:");
   ESP_LOGCONFIG(TAG, "  BLE address: %s", NimBLEDevice::getAddress().toString().c_str());
