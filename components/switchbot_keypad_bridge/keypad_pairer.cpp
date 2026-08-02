@@ -336,21 +336,33 @@ void KeypadPairer::execute_(Request &req) {
   // it sends IV requests to us as a SwitchBot Lock emulation. The BLE spec
   // allows only one ACL link between two peers, so we must terminate that
   // link before the central connect, otherwise connect() will always fail.
-  {
+  //
+  // The keypad is also only *connectable* in brief windows — it sleeps between
+  // interactions, so a single connect() often lands while it is unreachable and
+  // fails fast. Retry a few times (re-terminating any peripheral link each
+  // round) to catch the next connectable window. Waking the keypad by hand
+  // (tap a key) right before sending widens that window a lot.
+  NimBLEClient *client = NimBLEDevice::createClient();
+  client->setConnectTimeout(8000);  // ms (NimBLE-cpp 2.x uses ms, not seconds)
+  bool connected = false;
+  for (int attempt = 1; attempt <= 3 && !connected; attempt++) {
     struct ble_gap_conn_desc desc{};
     if (ble_gap_conn_find_by_addr(target.getBase(), &desc) == 0) {
-      ESP_LOGI(TAG, "Keypad still connected as peripheral (h=%u) — terminating before pair",
+      ESP_LOGI(TAG, "Keypad still connected as peripheral (h=%u) — terminating before connect",
                desc.conn_handle);
       ble_gap_terminate(desc.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
-      vTaskDelay(pdMS_TO_TICKS(600));
+      vTaskDelay(pdMS_TO_TICKS(800));
+    }
+    connected = client->connect(target);
+    if (!connected) {
+      ESP_LOGW(TAG, "Connect attempt %d/3 failed", attempt);
+      vTaskDelay(pdMS_TO_TICKS(1000));
     }
   }
-
-  NimBLEClient *client = NimBLEDevice::createClient();
-  client->setConnectTimeout(10000);  // ms (NimBLE-cpp 2.x uses ms, not seconds)
-  if (!client->connect(target)) {
+  if (!connected) {
     NimBLEDevice::deleteClient(client);
-    this->set_failed_("Could not connect to the keypad. Keep it within 2 m and retry.");
+    this->set_failed_(
+        "Could not connect to the keypad. Wake it (tap a key), keep it within 2 m, and retry.");
     return;
   }
 
