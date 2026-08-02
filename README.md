@@ -472,6 +472,27 @@ All options are optional.
 - **Key hygiene** — unpairing rotates the session key, so a previously paired
   keypad can no longer command the bridge.
 
+## 🧪 Protocol notes & experiments
+
+The keypad's GATT traffic is AES-128-CTR encrypted with a per-device
+*communication key* (K14). If you want to poke at undocumented commands
+(volume, feature toggles, …), two things ship for that:
+
+- **[docs/protocol.md](docs/protocol.md)** — reverse-engineered notes on the
+  frame format, IV negotiation, the command families (`0f4e` lock/unlock,
+  `0f52`/`0f53` SET/GET, credential ops), the unlock-method byte, and the
+  discovered parameters (including a volume hypothesis). Clean-room, best-effort.
+- **[tools/decrypt_capture.py](tools/decrypt_capture.py)** — decrypts an Android
+  `btsnoop_hci.log` of the official app given your K14, and lists the distinct
+  commands it saw. A fast way to discover new parameters.
+
+To get your K14, set `show_communication_key: true` and read it from the web
+console → **Settings** (off by default; it is a device secret — keep it out of
+public configs). To try a command from the bridge itself, use the
+`switchbot_keypad_bridge.send_command` action, which sends one raw plaintext
+command and logs the decrypted reply. See [docs/protocol.md](docs/protocol.md)
+for both.
+
 ## ❓ FAQ
 
 <details>

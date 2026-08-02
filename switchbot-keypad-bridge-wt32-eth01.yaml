@@ -38,7 +38,9 @@ ethernet:
   type: LAN8720
   mdc_pin: GPIO23
   mdio_pin: GPIO18
-  clk_mode: GPIO0_IN
+  clk:
+    mode: CLK_EXT_IN  # 50 MHz clock fed in on GPIO0
+    pin: 0
   phy_addr: 1
   power_pin: GPIO16
   # DHCP is the default. To pin a static address, uncomment:

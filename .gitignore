@@ -3,3 +3,7 @@ secrets.yaml
 __pycache__/
 *.pyc
 venv
+
+# Private BLE snoop captures — may contain device secrets. Keep local.
+btsnoop_hci.log
+*.btsnoop

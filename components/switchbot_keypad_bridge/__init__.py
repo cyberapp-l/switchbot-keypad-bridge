@@ -359,6 +359,9 @@ FINAL_VALIDATE_SCHEMA = _final_validate
             cv.Optional(CONF_KEY_ID, default=0): cv.templatable(cv.hex_int),
         }
     ),
+    # play() only hands off to a background task and returns, so play_next_()
+    # always runs before play_complex_() returns.
+    synchronous=True,
 )
 async def send_command_action_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)
