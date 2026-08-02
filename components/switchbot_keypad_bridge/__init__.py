@@ -94,6 +94,7 @@ CONF_MOTION = "motion"
 CONF_CHARGING = "charging"
 CONF_ON_TAMPER = "on_tamper"
 CONF_ON_DURESS = "on_duress"
+CONF_ON_SETTINGS_READ = "on_settings_read"
 
 # UnlockMethod bytes as the keypad reports them (see lock_protocol.h). 0xFF is
 # the "any method" wildcard used by the users mapping.
@@ -136,8 +137,15 @@ TamperTrigger = switchbot_keypad_bridge_ns.class_(
 DuressTrigger = switchbot_keypad_bridge_ns.class_(
     "DuressTrigger", automation.Trigger.template()
 )
+SettingsReadTrigger = switchbot_keypad_bridge_ns.class_(
+    "SettingsReadTrigger",
+    automation.Trigger.template(cg.std_vector.template(cg.int_)),
+)
 SendCommandAction = switchbot_keypad_bridge_ns.class_(
     "SendCommandAction", automation.Action
+)
+ReadSettingsAction = switchbot_keypad_bridge_ns.class_(
+    "ReadSettingsAction", automation.Action
 )
 
 
@@ -299,6 +307,9 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_ON_DURESS): automation.validate_automation(
             {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(DuressTrigger)}
         ),
+        cv.Optional(CONF_ON_SETTINGS_READ): automation.validate_automation(
+            {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(SettingsReadTrigger)}
+        ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -368,6 +379,29 @@ async def send_command_action_to_code(config, action_id, template_arg, args):
     await cg.register_parented(var, config[CONF_ID])
     cmd = await cg.templatable(config[CONF_COMMAND], args, cg.std_string)
     cg.add(var.set_command(cmd))
+    key = await cg.templatable(config[CONF_KEY], args, cg.std_string)
+    cg.add(var.set_key(key))
+    key_id = await cg.templatable(config[CONF_KEY_ID], args, cg.int_)
+    cg.add(var.set_key_id(key_id))
+    return var
+
+
+@automation.register_action(
+    "switchbot_keypad_bridge.read_settings",
+    ReadSettingsAction,
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.use_id(SwitchbotKeypadBridge),
+            cv.Optional(CONF_KEY, default=""): cv.templatable(cv.string),
+            cv.Optional(CONF_KEY_ID, default=0): cv.templatable(cv.hex_int),
+        }
+    ),
+    # play() only kicks off the background read and returns.
+    synchronous=True,
+)
+async def read_settings_action_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
     key = await cg.templatable(config[CONF_KEY], args, cg.std_string)
     cg.add(var.set_key(key))
     key_id = await cg.templatable(config[CONF_KEY_ID], args, cg.int_)
@@ -501,6 +535,12 @@ async def to_code(config):
     for trig_conf in config.get(CONF_ON_DURESS, []):
         trig = cg.new_Pvariable(trig_conf[CONF_TRIGGER_ID], var)
         await automation.build_automation(trig, [], trig_conf)
+
+    for trig_conf in config.get(CONF_ON_SETTINGS_READ, []):
+        trig = cg.new_Pvariable(trig_conf[CONF_TRIGGER_ID], var)
+        await automation.build_automation(
+            trig, [(cg.std_vector.template(cg.int_), "x")], trig_conf
+        )
 
     # NimBLE C++ wrapper, pulled as ESP-IDF managed component (no Python deps).
     add_idf_component(

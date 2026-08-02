@@ -142,8 +142,16 @@ class SwitchbotKeypadBridge : public Component {
   void send_raw_command(const std::string &command_hex, const std::string &key_hex,
                         int key_id);
 
+  // Settings read-back (switchbot_keypad_bridge.read_settings action): connect
+  // once, GET all keypad settings, and fire on_settings_read with one value per
+  // parameter (see SETTINGS_READ_PARAMS). `key_hex`/`key_id` as send_raw_command.
+  void read_settings(const std::string &key_hex, int key_id);
+
   void add_on_lock_callback(std::function<void()> &&callback) {
     this->on_lock_callbacks_.add(std::move(callback));
+  }
+  void add_on_settings_read_callback(std::function<void(std::vector<int>)> &&callback) {
+    this->on_settings_read_callbacks_.add(std::move(callback));
   }
   void add_on_unlock_callback(std::function<void(std::string, int, std::string)> &&callback) {
     this->on_unlock_callbacks_.add(std::move(callback));
@@ -276,6 +284,12 @@ class SwitchbotKeypadBridge : public Component {
   CallbackManager<void()> on_lock_callbacks_{};
   CallbackManager<void(std::string, int, std::string)> on_unlock_callbacks_{};
   CallbackManager<void()> on_doorbell_callbacks_{};
+  CallbackManager<void(std::vector<int>)> on_settings_read_callbacks_{};
+
+  // A settings read runs on the pairer's background task; loop() polls for the
+  // result while inflight and gives up (logs) once the deadline passes.
+  bool settings_read_inflight_{false};
+  uint32_t settings_read_deadline_{0};
 
   // ----- Credential labelling / unlock stats ---------------------------------
 

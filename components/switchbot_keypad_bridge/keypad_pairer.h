@@ -70,6 +70,10 @@ class KeypadPairer {
     // negotiate an IV, send this one plaintext command (encrypted with `key`
     // at `key_id`), log the decrypted response, and disconnect.
     std::vector<uint8_t>         raw_command;
+    // Settings read-back: when non-empty, connect once, GET each of these
+    // parameters (`0f 53 01 <param>`), and stash the first decrypted byte of
+    // each reply in read order. Retrieved via take_read_result().
+    std::vector<uint8_t>         read_params;
   };
 
   // Spawns the pairing task and returns a job id. If a job is already
@@ -86,6 +90,11 @@ class KeypadPairer {
 
   // Atomic snapshot of progress. Suitable for polling from any thread.
   Status status() const;
+
+  // Moves out the values from the most recent settings read (one int per
+  // requested param, in request order; -1 where the GET failed). Returns false
+  // until a batch read completes, and only yields each result once.
+  bool take_read_result(std::vector<int> &out);
 
  private:
   void execute_(Request &req);
@@ -120,6 +129,11 @@ class KeypadPairer {
   std::array<uint8_t, 16> iv_{};            // session IV; valid once iv_received_
   std::atomic<bool>    iv_received_{false};
   std::vector<uint8_t> last_notify_;        // most recent TX notification (raw mode)
+
+  // ----- Settings read-back result (task writes, main loop drains) -----
+  std::mutex           read_mu_;
+  std::vector<int>     read_values_;
+  std::atomic<bool>    read_ready_{false};
 };
 
 }  // namespace switchbot_keypad_bridge

@@ -111,6 +111,16 @@ class PairingUi {
                          const std::vector<uint8_t> &key,
                          const std::vector<uint8_t> &plaintext);
 
+  // Settings read-back: connect once and GET each of `params`, encrypted with
+  // `key` at `key_id`. Returns false if a job is already running. Results are
+  // drained (once) by take_settings_result on the main loop.
+  bool start_settings_read(const std::string &mac, KeypadFamily family, int key_id,
+                           const std::vector<uint8_t> &key,
+                           const std::vector<uint8_t> &params);
+  bool take_settings_result(std::vector<int> &out) {
+    return this->pairer_.take_read_result(out);
+  }
+
   // True while a blocking BLE scan started by the pairing flow is in progress.
   // The component's battery scan checks this to avoid fighting over the shared
   // NimBLE scan singleton now that the server stays up permanently.

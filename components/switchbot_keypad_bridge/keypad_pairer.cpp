@@ -209,6 +209,15 @@ KeypadPairer::Status KeypadPairer::status() const {
   return this->status_;
 }
 
+bool KeypadPairer::take_read_result(std::vector<int> &out) {
+  if (!this->read_ready_.exchange(false)) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lk(this->read_mu_);
+  out = this->read_values_;
+  return true;
+}
+
 // ── Status helpers ────────────────────────────────────────────────────────
 
 void KeypadPairer::set_running_(uint8_t total, const std::string &job_id) {
@@ -422,6 +431,44 @@ void KeypadPairer::execute_(Request &req) {
     client->disconnect();
     NimBLEDevice::deleteClient(client);
     this->set_failed_("Keypad did not open a session. Reset it into pairing mode and retry.");
+    return;
+  }
+
+  // Settings read-back mode: GET every requested parameter over this one
+  // connection, decrypt each reply, and hand the first byte of each back to the
+  // main loop via take_read_result(). One connect for all settings keeps the
+  // keypad's radio (and battery) burden minimal.
+  if (!req.read_params.empty()) {
+    std::vector<int> values;
+    values.reserve(req.read_params.size());
+    for (uint8_t p : req.read_params) {
+      { std::lock_guard<std::mutex> lk(this->mu_); this->last_notify_.clear(); }
+      const uint8_t get_cmd[4] = {0x0F, 0x53, 0x01, p};
+      int val = -1;
+      if (this->send_command_(rx, get_cmd, sizeof(get_cmd))) {
+        std::vector<uint8_t> resp;
+        { std::lock_guard<std::mutex> lk(this->mu_); resp = this->last_notify_; }
+        if (resp.size() > 4) {  // 4-byte header + ciphertext
+          std::vector<uint8_t> pt(resp.size() - 4);
+          if (aes_ctr_xcrypt_raw_key(this->key_.data(), this->iv_.data(),
+                                     resp.data() + 4, pt.data(), pt.size()) &&
+              !pt.empty()) {
+            val = pt[0];  // first decrypted byte = the parameter's current value
+          }
+        }
+      }
+      ESP_LOGW(TAG, "read_settings: param 0x%02X = %d", p, val);
+      values.push_back(val);
+    }
+    { std::lock_guard<std::mutex> lk(this->read_mu_); this->read_values_ = std::move(values); }
+    this->read_ready_.store(true);
+
+    client->disconnect();
+    for (int i = 0; i < 30 && client->isConnected(); ++i) {
+      vTaskDelay(pdMS_TO_TICKS(50));  // let the link close (battery, see raw path)
+    }
+    NimBLEDevice::deleteClient(client);
+    this->set_success_(req.keypad_mac, family);
     return;
   }
 

@@ -90,6 +90,18 @@ bool PairingUi::start_raw_command(const std::string &mac, KeypadFamily family, i
   return !this->pairer_.start(std::move(kr)).empty();
 }
 
+bool PairingUi::start_settings_read(const std::string &mac, KeypadFamily family, int key_id,
+                                    const std::vector<uint8_t> &key,
+                                    const std::vector<uint8_t> &params) {
+  KeypadPairer::Request kr;
+  kr.keypad_mac = mac;
+  kr.family = family;
+  kr.key_id = key_id;
+  kr.key = key;
+  kr.read_params = params;
+  return !this->pairer_.start(std::move(kr)).empty();
+}
+
 // ── Authentication ──────────────────────────────────────────────────────────
 
 bool PairingUi::require_auth_(httpd_req_t *req) {

@@ -59,5 +59,27 @@ class SendCommandAction : public Action<Ts...>, public Parented<SwitchbotKeypadB
   }
 };
 
+// switchbot_keypad_bridge.read_settings — read all keypad settings in one BLE
+// connection; the values arrive via the on_settings_read trigger.
+template<typename... Ts>
+class ReadSettingsAction : public Action<Ts...>, public Parented<SwitchbotKeypadBridge> {
+ public:
+  TEMPLATABLE_VALUE(std::string, key)
+  TEMPLATABLE_VALUE(int, key_id)
+  void play(const Ts &...x) override {
+    this->parent_->read_settings(this->key_.value(x...), this->key_id_.value(x...));
+  }
+};
+
+// Fires after a read_settings run with one value per parameter, in the order
+// documented on SwitchbotKeypadBridge::read_settings (-1 where a GET failed).
+class SettingsReadTrigger : public Trigger<std::vector<int>> {
+ public:
+  explicit SettingsReadTrigger(SwitchbotKeypadBridge *parent) {
+    parent->add_on_settings_read_callback(
+        [this](std::vector<int> values) { this->trigger(std::move(values)); });
+  }
+};
+
 }  // namespace switchbot_keypad_bridge
 }  // namespace esphome

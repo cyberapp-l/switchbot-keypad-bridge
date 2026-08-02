@@ -148,6 +148,35 @@ switchbot_keypad_bridge:
     - homeassistant.event:
         event: esphome.switchbot_keypad_duress
 
+  # Fires after the "Refresh Keypad Settings" button reads the keypad. `x` is a
+  # vector<int> with one value per setting, in this fixed order (–1 = unread):
+  #   x[0] Disable Keypad   x[1] Fast Unlock   x[2] Sensitivity
+  #   x[3] Face Recognition x[4] Disabling Interval (seconds)  x[5] Volume level
+  # We publish each real value back onto the matching select/switch so the HA
+  # control reflects the keypad instead of the last value you set.
+  on_settings_read:
+    - lambda: |-
+        if (x.size() < 6) return;
+        if (x[0] == 1) id(kp_disable).publish_state(false);
+        else if (x[0] == 2) id(kp_disable).publish_state(true);
+        if (x[1] == 0) id(kp_fastunlock).publish_state(false);
+        else if (x[1] == 1) id(kp_fastunlock).publish_state(true);
+        if (x[2] == 1) id(kp_sensitivity).publish_state("Low");
+        else if (x[2] == 2) id(kp_sensitivity).publish_state("Medium");
+        else if (x[2] == 3) id(kp_sensitivity).publish_state("High");
+        if (x[3] == 1) id(kp_face).publish_state("Auto");
+        else if (x[3] == 2) id(kp_face).publish_state("Manual");
+        else if (x[3] == 3) id(kp_face).publish_state("Custom");
+        if (x[4] == 0) id(kp_interval).publish_state("0s");
+        else if (x[4] == 5) id(kp_interval).publish_state("5s");
+        else if (x[4] == 15) id(kp_interval).publish_state("15s");
+        else if (x[4] == 30) id(kp_interval).publish_state("30s");
+        else if (x[4] == 60) id(kp_interval).publish_state("60s");
+        if (x[5] == 1) id(kp_volume).publish_state("Mute");
+        else if (x[5] == 2) id(kp_volume).publish_state("Low");
+        else if (x[5] == 3) id(kp_volume).publish_state("Medium");
+        else if (x[5] == 4) id(kp_volume).publish_state("High");
+
   # Drop duplicate unlocks from the same credential within this window.
   min_unlock_interval: 3s
 
@@ -208,6 +237,7 @@ script:
 select:
   - platform: template
     name: "Keypad Volume"
+    id: kp_volume
     icon: "mdi:volume-high"
     entity_category: config
     optimistic: true
@@ -223,6 +253,7 @@ select:
 
   - platform: template
     name: "Keypad Sensitivity"
+    id: kp_sensitivity
     icon: "mdi:signal-distance-variant"
     entity_category: config
     optimistic: true
@@ -237,6 +268,7 @@ select:
 
   - platform: template
     name: "Keypad Face Recognition"
+    id: kp_face
     icon: "mdi:face-recognition"
     entity_category: config
     optimistic: true
@@ -251,6 +283,7 @@ select:
 
   - platform: template
     name: "Keypad Disabling Interval"
+    id: kp_interval
     icon: "mdi:timer-sand"
     entity_category: config
     optimistic: true
@@ -268,6 +301,7 @@ select:
 switch:
   - platform: template
     name: "Keypad Fast Unlock"
+    id: kp_fastunlock
     icon: "mdi:flash"
     entity_category: config
     optimistic: true
@@ -280,6 +314,7 @@ switch:
   # unlock method stops working until you switch it back off.
   - platform: template
     name: "Keypad Disable"
+    id: kp_disable
     icon: "mdi:lock-off-outline"
     entity_category: config
     optimistic: true
@@ -287,3 +322,19 @@ switch:
       - script.execute: { id: keypad_setting, command: "0f52010202" }
     turn_off_action:
       - script.execute: { id: keypad_setting, command: "0f52010201" }
+
+button:
+  # Reads every keypad setting in ONE BLE connection and updates the select/
+  # switch controls above to the keypad's real state (they are otherwise
+  # optimistic). Press it when you want to sync; the keypad must be awake/in
+  # range (tap a key on it first if the read comes back empty). Costs one BLE
+  # connect, so this is on-demand rather than polled — see docs/protocol.md.
+  - platform: template
+    name: "Refresh Keypad Settings"
+    id: kp_refresh_settings
+    icon: "mdi:refresh"
+    entity_category: config
+    on_press:
+      - switchbot_keypad_bridge.read_settings:
+          key: !secret keypad_k14
+          key_id: 0x45
