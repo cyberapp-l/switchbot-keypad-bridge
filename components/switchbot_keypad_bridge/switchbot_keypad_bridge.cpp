@@ -396,7 +396,10 @@ void SwitchbotKeypadBridge::send_raw_command(const std::string &command_hex,
   std::vector<uint8_t> key;
   if (!key_hex.empty()) {
     if (!unhex_(key_hex, key) || key.size() != 16) {
-      ESP_LOGW(TAG, "send_command: key must be 16 bytes (32 hex chars)");
+      ESP_LOGW(TAG,
+               "send_command: key must be 32 hex chars (16 bytes); got %u chars. "
+               "Fix the keypad_k14 secret (the 32-hex K14 only, no key_id/spaces).",
+               static_cast<unsigned>(key_hex.size()));
       return;
     }
   } else {
@@ -429,7 +432,10 @@ void SwitchbotKeypadBridge::read_settings(const std::string &key_hex, int key_id
   std::vector<uint8_t> key;
   if (!key_hex.empty()) {
     if (!unhex_(key_hex, key) || key.size() != 16) {
-      ESP_LOGW(TAG, "read_settings: key must be 16 bytes (32 hex chars)");
+      ESP_LOGW(TAG,
+               "read_settings: key must be 32 hex chars (16 bytes); got %u chars. "
+               "Fix the keypad_k14 secret (the 32-hex K14 only, no key_id/spaces).",
+               static_cast<unsigned>(key_hex.size()));
       return;
     }
   } else {
