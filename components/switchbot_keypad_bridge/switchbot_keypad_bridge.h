@@ -116,6 +116,12 @@ class SwitchbotKeypadBridge : public Component {
   // window. 0 disables the throttle (every unlock fires an event).
   void set_min_unlock_interval(uint32_t ms) { this->min_unlock_interval_ms_ = ms; }
 
+  // After an unlock, silently return the emulated lock to LOCKED this many ms
+  // later so the keypad's state poll sees a normal lock cycle. Helps keypads in
+  // "Fast Unlock" mode keep triggering face recognition (they skip it while the
+  // lock reads UNLOCKED). 0 = never auto-relock (default).
+  void set_auto_relock(uint32_t ms) { this->auto_relock_ms_ = ms; }
+
   // HTTP Basic Auth for the always-on web console. An empty password leaves
   // the server open (original behaviour); set one to require a login.
   void set_web_credentials(const std::string &user, const std::string &pass) {
@@ -388,6 +394,12 @@ class SwitchbotKeypadBridge : public Component {
   psa_key_id_t aes_key_handle_{PSA_KEY_ID_NULL};
   LockState lock_state_{LockState::LOCKED};
 
+  // Auto-relock: when auto_relock_ms_ > 0, an unlock arms a timer; loop() flips
+  // lock_state_ back to LOCKED once it fires (main-loop only, like lock_state_).
+  uint32_t auto_relock_ms_{0};
+  uint32_t relock_at_{0};
+  bool relock_pending_{false};
+
   // Per-connection encrypted-session state (token slot, IV, anti-replay,
   // transport crypto). Only ever touched from the main task.
   LockSession session_{};
@@ -397,6 +409,9 @@ class SwitchbotKeypadBridge : public Component {
   ESPPreferenceObject keypad_info_pref_;
   KeypadInfo keypad_info_{};
   bool keypad_paired_{false};
+  // Paired keypad display name, kept as a fixed buffer so the HTTP task can read
+  // it (for /api/paired) without racing a std::string reallocation.
+  char keypad_name_[KEYPAD_NAME_MAX]{};
 
   // Atomic: the web Settings tab can update it from the HTTP task while the
   // main task reads it in maybe_start_battery_scan_(). The NVS write is
@@ -416,6 +431,7 @@ class SwitchbotKeypadBridge : public Component {
   std::atomic<bool> settings_dirty_{false};
   std::string web_settings_json_();                      // HTTP task: serialise
   bool set_web_settings_json_(const std::string &json);  // HTTP task: parse + stage
+  std::string paired_json_();                            // HTTP task: {paired,name,mac}
   void load_settings_();                                 // setup: load from NVS
   void save_settings_();                                 // loop: flush to NVS
   uint32_t next_battery_scan_at_{0};  // millis() deadline for the next scan

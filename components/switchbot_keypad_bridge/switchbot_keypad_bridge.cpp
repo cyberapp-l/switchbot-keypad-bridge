@@ -142,6 +142,7 @@ void SwitchbotKeypadBridge::setup() {
   if (this->keypad_name_pref_.load(&stored_name) && stored_name[0] != '\0') {
     stored_name[KEYPAD_NAME_MAX - 1] = '\0';
     have_keypad = true;
+    std::strncpy(this->keypad_name_, stored_name, KEYPAD_NAME_MAX - 1);
     if (this->keypad_text_sensor_ != nullptr) {
       this->keypad_text_sensor_->publish_state(stored_name);
     }
@@ -187,6 +188,7 @@ void SwitchbotKeypadBridge::setup() {
   this->pairing_ui_.set_settings_get_provider([this]() { return this->web_settings_json_(); });
   this->pairing_ui_.set_settings_set_handler(
       [this](const std::string &body) { return this->set_web_settings_json_(body); });
+  this->pairing_ui_.set_paired_provider([this]() { return this->paired_json_(); });
   this->pairing_ui_.set_on_paired_callback(
       [this](const std::string &name, const std::string &mac,
              KeypadFamily family) {
@@ -232,6 +234,8 @@ void SwitchbotKeypadBridge::loop() {
     global_preferences->sync();
 
     this->keypad_paired_ = true;
+    std::memset(this->keypad_name_, 0, KEYPAD_NAME_MAX);
+    name.copy(this->keypad_name_, KEYPAD_NAME_MAX - 1);
     this->last_battery_ = -1;
     // Pick the new keypad's battery up shortly, not a full interval away.
     this->next_battery_scan_at_ = millis() + 10000;
@@ -253,6 +257,14 @@ void SwitchbotKeypadBridge::loop() {
   }
   if (this->settings_dirty_.exchange(false, std::memory_order_acquire)) {
     this->save_settings_();
+  }
+
+  // Auto-relock: flip the emulated lock back to LOCKED once the timer fires, so
+  // the keypad's state poll sees a lock cycle (no HA event — internal only).
+  if (this->relock_pending_ && static_cast<int32_t>(millis() - this->relock_at_) >= 0) {
+    this->relock_pending_ = false;
+    this->lock_state_ = LockState::LOCKED;
+    ESP_LOGD(TAG, "Auto-relock: lock state returned to LOCKED");
   }
 
   // Deliver a pending settings read-back (populated by the pairer's background
@@ -328,9 +340,12 @@ void SwitchbotKeypadBridge::unpair() {
   // Forget the paired keypad name and its battery-scan identity.
   char empty[KEYPAD_NAME_MAX] = {};
   this->keypad_name_pref_.save(&empty);
+  std::memset(this->keypad_name_, 0, KEYPAD_NAME_MAX);
   this->keypad_info_ = KeypadInfo{};
   this->keypad_info_pref_.save(&this->keypad_info_);
   global_preferences->sync();
+  // Drop the persisted communication key too — it belonged to the old keypad.
+  this->pairing_ui_.clear_comm_key();
   if (this->keypad_text_sensor_ != nullptr) {
     this->keypad_text_sensor_->publish_state("Unpaired");
   }
@@ -583,6 +598,7 @@ void SwitchbotKeypadBridge::handle_command_(const FrameHeader &header, const Dec
     case CommandType::LOCK:
       ESP_LOGI(TAG, "Lock");
       this->lock_state_ = LockState::LOCKED;
+      this->relock_pending_ = false;  // already locked; cancel any pending relock
       this->publish_lock_();
       this->send_encrypted_response_(header, RESPONSE_LOCK, sizeof(RESPONSE_LOCK));
       return;
@@ -594,6 +610,12 @@ void SwitchbotKeypadBridge::handle_command_(const FrameHeader &header, const Dec
       this->lock_state_ = LockState::UNLOCKED;
       this->publish_unlock_(command.method, command.credential_index);
       this->send_encrypted_response_(header, RESPONSE_UNLOCK, sizeof(RESPONSE_UNLOCK));
+      // Arm the auto-relock so the emulated lock returns to LOCKED and the
+      // keypad sees a normal cycle (matters for Fast Unlock face recognition).
+      if (this->auto_relock_ms_ > 0) {
+        this->relock_at_ = millis() + this->auto_relock_ms_;
+        this->relock_pending_ = true;
+      }
       return;
 
     case CommandType::STATE_POLL:
@@ -836,6 +858,31 @@ std::string SwitchbotKeypadBridge::web_settings_json_() {
       o, "min_unlock_interval_s",
       static_cast<double>(this->min_unlock_interval_ms_.load() / 1000));
   cJSON_AddBoolToObject(o, "scan_enabled", this->scan_enabled_.load());
+  std::string out = "{}";
+  char *s = cJSON_PrintUnformatted(o);
+  if (s != nullptr) {
+    out = s;
+    cJSON_free(s);
+  }
+  cJSON_Delete(o);
+  return out;
+}
+
+std::string SwitchbotKeypadBridge::paired_json_() {
+  cJSON *o = cJSON_CreateObject();
+  cJSON_AddBoolToObject(o, "paired", this->keypad_paired_);
+  if (this->keypad_paired_) {
+    if (this->keypad_name_[0] != '\0') {
+      cJSON_AddStringToObject(o, "name", this->keypad_name_);
+    }
+    if (this->keypad_info_.valid != 0) {
+      const uint8_t *m = this->keypad_info_.mac;
+      char mac[18];
+      std::snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", m[0], m[1], m[2], m[3],
+                    m[4], m[5]);
+      cJSON_AddStringToObject(o, "mac", mac);
+    }
+  }
   std::string out = "{}";
   char *s = cJSON_PrintUnformatted(o);
   if (s != nullptr) {

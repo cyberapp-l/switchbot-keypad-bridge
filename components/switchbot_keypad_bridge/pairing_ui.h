@@ -29,6 +29,7 @@
 #include <map>
 #include <string>
 
+#include "esphome/core/preferences.h"
 #include "cloud_client.h"
 #include "keypad_advert.h"
 #include "keypad_pairer.h"
@@ -90,6 +91,20 @@ class PairingUi {
   void set_settings_set_handler(std::function<bool(const std::string &)> cb) {
     this->settings_set_handler_ = std::move(cb);
   }
+
+  // GET /api/paired returns the provider's JSON describing the currently paired
+  // keypad ({paired, name, mac}) so the wizard can show it after a reload/reboot
+  // instead of always starting at sign-in.
+  void set_paired_provider(std::function<std::string()> cb) {
+    this->paired_provider_ = std::move(cb);
+  }
+
+  // Load any persisted communication key from NVS (call once, after prefs are
+  // up). Lets the Settings tab show the key after a reboot, not just in the
+  // session that paired. Only ever populated when show_communication_key is on.
+  void load_comm_key();
+  // Forget the persisted communication key (called on unpair / key rotation).
+  void clear_comm_key();
 
   bool is_running() const { return this->server_ != nullptr; }
 
@@ -153,6 +168,10 @@ class PairingUi {
   static esp_err_t handle_settings_get_(httpd_req_t *req);
   static esp_err_t handle_settings_set_(httpd_req_t *req);
   static esp_err_t handle_commkey_(httpd_req_t *req);
+  static esp_err_t handle_paired_(httpd_req_t *req);
+
+  // Persist / restore the communication key (RAM mirror + NVS blob).
+  void save_comm_key_();
 
   static esp_err_t reply_json_(httpd_req_t *req, const char *json,
                                const char *status = "200 OK");
@@ -177,6 +196,17 @@ class PairingUi {
   std::function<bool(const std::string &)> users_set_handler_;
   std::function<std::string()> settings_get_provider_;
   std::function<bool(const std::string &)> settings_set_handler_;
+  std::function<std::string()> paired_provider_;
+
+  // NVS blob for the communication key so it survives reboots (fixed char
+  // arrays keep save/load trivial). Only written when show_communication_key.
+  struct CommKeyBlob {
+    uint8_t valid;
+    char key_id[8];  // hex string, e.g. "45"
+    char key[40];    // 32 hex chars + NUL
+    char mac[20];    // pretty MAC + NUL
+  };
+  ESPPreferenceObject comm_key_pref_;
   // Identify the pairing this UI started. The success handler matches
   // Status::job_id against pairing_job_id_ before firing on_paired_cb_,
   // so a previous job's lingering SUCCESS can never apply the wrong

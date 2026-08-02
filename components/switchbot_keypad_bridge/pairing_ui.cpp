@@ -39,7 +39,7 @@ bool PairingUi::start(uint16_t port) {
   }
   httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
   cfg.server_port = port;
-  cfg.max_uri_handlers = 12;
+  cfg.max_uri_handlers = 13;
   cfg.uri_match_fn = httpd_uri_match_wildcard;
   cfg.stack_size = 8192;  // headroom for the BLE scan run from /api/keypads
   cfg.lru_purge_enable = true;
@@ -66,9 +66,45 @@ bool PairingUi::start(uint16_t port) {
   reg("/api/settings",      HTTP_GET,  PairingUi::handle_settings_get_);
   reg("/api/settings",      HTTP_POST, PairingUi::handle_settings_set_);
   reg("/api/commkey",       HTTP_GET,  PairingUi::handle_commkey_);
+  reg("/api/paired",        HTTP_GET,  PairingUi::handle_paired_);
 
+  this->load_comm_key();  // restore the K14 (if any) so it survives reboots
   ESP_LOGI(TAG, "Pairing UI listening on http://<device>:%u/", port);
   return true;
+}
+
+void PairingUi::load_comm_key() {
+  this->comm_key_pref_ =
+      global_preferences->make_preference<CommKeyBlob>(0x534B434BUL /* 'SKCK' */);
+  CommKeyBlob blob{};
+  if (this->comm_key_pref_.load(&blob) && blob.valid) {
+    blob.key_id[sizeof(blob.key_id) - 1] = '\0';
+    blob.key[sizeof(blob.key) - 1] = '\0';
+    blob.mac[sizeof(blob.mac) - 1] = '\0';
+    this->comm_key_id_ = blob.key_id;
+    this->comm_key_hex_ = blob.key;
+    this->comm_key_mac_ = blob.mac;
+    ESP_LOGI(TAG, "Restored keypad communication key from NVS (%s)", this->comm_key_mac_.c_str());
+  }
+}
+
+void PairingUi::save_comm_key_() {
+  CommKeyBlob blob{};
+  blob.valid = 1;
+  std::strncpy(blob.key_id, this->comm_key_id_.c_str(), sizeof(blob.key_id) - 1);
+  std::strncpy(blob.key, this->comm_key_hex_.c_str(), sizeof(blob.key) - 1);
+  std::strncpy(blob.mac, this->comm_key_mac_.c_str(), sizeof(blob.mac) - 1);
+  this->comm_key_pref_.save(&blob);
+  global_preferences->sync();
+}
+
+void PairingUi::clear_comm_key() {
+  this->comm_key_id_.clear();
+  this->comm_key_hex_.clear();
+  this->comm_key_mac_.clear();
+  CommKeyBlob blob{};  // valid = 0
+  this->comm_key_pref_.save(&blob);
+  global_preferences->sync();
 }
 
 void PairingUi::stop() {
@@ -407,10 +443,12 @@ esp_err_t PairingUi::handle_pair_(httpd_req_t *req) {
     }
     ESP_LOGW(TAG, "Communication key for %s: key_id=%s key=%s",
              found->mac_pretty.c_str(), key_id_hex.c_str(), kh.c_str());
-    // Stash for the web GUI (RAM only — re-fetched each pairing, never in NVS).
+    // Stash for the web GUI and persist to NVS so it survives a reboot/reflash
+    // (the keypad stays paired in NVS, so the key should too when opted in).
     self->comm_key_id_ = key_id_hex;
     self->comm_key_hex_ = kh;
     self->comm_key_mac_ = found->mac_pretty;
+    self->save_comm_key_();
   }
 
   // Build the pairer's request.
@@ -521,6 +559,13 @@ esp_err_t PairingUi::handle_commkey_(httpd_req_t *req) {
   cJSON_AddStringToObject(o, "key", self->comm_key_hex_.c_str());
   cJSON_AddStringToObject(o, "mac", self->comm_key_mac_.c_str());
   return reply_json_(req, json_take(o).c_str());
+}
+
+esp_err_t PairingUi::handle_paired_(httpd_req_t *req) {
+  if (!require_auth_(req)) return ESP_OK;
+  auto *self = static_cast<PairingUi *>(req->user_ctx);
+  const std::string json = self->paired_provider_ ? self->paired_provider_() : "{}";
+  return reply_json_(req, json.c_str());
 }
 
 esp_err_t PairingUi::handle_settings_get_(httpd_req_t *req) {

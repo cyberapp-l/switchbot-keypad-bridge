@@ -68,6 +68,7 @@ CONF_USERS = "users"
 CONF_METHOD = "method"
 CONF_INDEX = "index"
 CONF_MIN_UNLOCK_INTERVAL = "min_unlock_interval"
+CONF_AUTO_RELOCK = "auto_relock"
 
 # HTTP Basic Auth for the always-on web console.
 CONF_WEB_USERNAME = "web_username"
@@ -280,6 +281,11 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_MIN_UNLOCK_INTERVAL, default="0s"
         ): cv.positive_time_period_milliseconds,
+        # After an unlock, return the emulated lock to LOCKED this long later so
+        # the keypad sees a normal lock cycle. 0s = never (default).
+        cv.Optional(
+            CONF_AUTO_RELOCK, default="0s"
+        ): cv.positive_time_period_milliseconds,
         # HTTP Basic Auth for the always-on web console. Omit web_password to
         # leave it open (original behaviour).
         cv.Optional(CONF_WEB_USERNAME, default="admin"): cv.string_strict,
@@ -485,6 +491,7 @@ async def to_code(config):
         )
 
     cg.add(var.set_min_unlock_interval(config[CONF_MIN_UNLOCK_INTERVAL].total_milliseconds))
+    cg.add(var.set_auto_relock(config[CONF_AUTO_RELOCK].total_milliseconds))
 
     cg.add(
         var.set_web_credentials(

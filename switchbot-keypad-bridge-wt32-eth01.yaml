@@ -180,6 +180,12 @@ switchbot_keypad_bridge:
   # Drop duplicate unlocks from the same credential within this window.
   min_unlock_interval: 3s
 
+  # Auto-relock: after an unlock, return the emulated lock to LOCKED this long
+  # later. The bridge has no real deadbolt, so it otherwise stays "unlocked"
+  # forever — which makes a keypad in "Fast Unlock" mode stop triggering face
+  # recognition (it skips the scan while the lock reads unlocked). 0s = never.
+  # auto_relock: 10s
+
   # Protect the always-on web console (pairing wizard + config) with a login.
   # Omit web_password to leave it open on the LAN. Username defaults to "admin".
   # web_username: "admin"

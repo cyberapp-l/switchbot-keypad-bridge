@@ -400,6 +400,8 @@
   }
   .banner-error  { background: var(--sb-alert-bg);    color: var(--sb-theme);   }
   .banner-error .icon  { background: var(--sb-theme); }
+  .banner-success  { background: var(--sb-success-bg); color: var(--sb-success); }
+  .banner-success .icon  { background: var(--sb-success); }
 
   /* ── Result screens (rendered in place of the stepper, inside the card) ── */
   .result-hero {
@@ -609,6 +611,11 @@
       </div>
       <h1>Sign in</h1>
       <p class="subtitle">Connect your SwitchBot account to discover keypads.</p>
+    </div>
+
+    <div id="paired-banner" class="banner banner-success hidden" style="margin-bottom:var(--sp-md);">
+      <span class="icon">✓</span>
+      <span><b id="paired-name"></b> <span id="paired-sub"></span></span>
     </div>
 
     <form id="login-form">
@@ -841,6 +848,7 @@
       login_sub: 'Connect your SwitchBot account to discover keypads.',
       login_email: 'Email', login_password: 'Password', login_btn: 'Continue',
       login_foot: 'Credentials are used only to call the SwitchBot API and are kept in device RAM for this session only.',
+      paired_generic: 'A keypad is paired', paired_sub: 'already paired — sign in only to re-pair.',
       keypads_h2: 'Your keypads',
       keypads_sub: 'Select a keypad to pair with this bridge.',
       rescan: '↻ Rescan', pair: 'Pair', out_of_range: 'Out of range', nearby: 'Nearby',
@@ -880,6 +888,7 @@
       login_sub: 'התחבר לחשבון ה-SwitchBot שלך כדי לגלות קודנים.',
       login_email: 'אימייל', login_password: 'סיסמה', login_btn: 'המשך',
       login_foot: 'פרטי ההתחברות משמשים רק לקריאת ה-API של SwitchBot ונשמרים בזיכרון המכשיר להפעלה הזו בלבד.',
+      paired_generic: 'קודן מצומד', paired_sub: 'כבר מצומד — היכנס למטה רק כדי לצמד מחדש.',
       keypads_h2: 'הקודנים שלך',
       keypads_sub: 'בחר קודן לצימוד עם הגשר הזה.',
       rescan: '↻ סרוק שוב', pair: 'צמד', out_of_range: 'מחוץ לטווח', nearby: 'בקרבת מקום',
@@ -970,8 +979,27 @@
       if (el) el.classList.toggle('active', id === active);
     });
   }
-  function openPair() { showScreen(lastWizardScreen || 'login'); }
+  function openPair() { showScreen(lastWizardScreen || 'login'); refreshPairedBanner(); }
   function openActivity() { showScreen('activity'); loadEvents(); }
+
+  /* Show a "already paired" banner on the sign-in screen so a reload/reboot no
+     longer looks like nothing is paired. The keypad identity is persisted on
+     the device (NVS); this just reflects it. */
+  async function refreshPairedBanner() {
+    const banner = document.getElementById('paired-banner');
+    if (!banner) return;
+    try {
+      const p = await api('GET', '/api/paired');
+      if (p && p.paired) {
+        document.getElementById('paired-name').textContent = p.name || t('paired_generic');
+        document.getElementById('paired-sub').textContent =
+          (p.mac ? '(' + p.mac + ') ' : '') + t('paired_sub');
+        banner.classList.remove('hidden');
+      } else {
+        banner.classList.add('hidden');
+      }
+    } catch (_) { banner.classList.add('hidden'); }
+  }
   function openUsers() { showScreen('users'); loadUsers(); }
   function openSettings() { showScreen('settings'); loadSettings(); }
 
@@ -1432,6 +1460,7 @@
       ((navigator.language || '').toLowerCase().startsWith('he') ? 'he' : 'en');
     applyLang(guess);
     updateTabs('login');
+    refreshPairedBanner();
   })();
 </script>
 </body>

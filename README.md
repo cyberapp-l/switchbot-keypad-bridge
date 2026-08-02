@@ -439,12 +439,18 @@ All options are optional.
 | `web_password` | string | HTTP Basic Auth password. Omit to leave the console open on the LAN. |
 | **Misc** | | |
 | `unpair_button` | button | Forgets the keypad, rotates the session key, re-opens the wizard (no reboot). |
+| `auto_relock` | time | After an unlock, return the emulated lock to LOCKED this long later. `0s` = never (default). See the Fast Unlock note below. |
+| `show_communication_key` | bool | Expose the keypad's communication key (K14) in the web console → Settings (and persist it across reboots). Default off; it's a device secret. |
 | **Triggers** | | |
 | `on_lock` | automation | On every `lock` command. |
 | `on_unlock` | automation | On every unlock — params `(std::string method, int index, std::string name)`. |
 | `on_doorbell` | automation | On every doorbell press (Vision). |
 | `on_tamper` | automation | On the tamper alarm (Vision). |
 | `on_duress` | automation | On the duress/panic code (Vision). |
+| `on_settings_read` | automation | After `switchbot_keypad_bridge.read_settings` — param `std::vector<int>` (one value per setting). Used to reflect keypad settings back into HA controls. |
+| **Actions** | | |
+| `switchbot_keypad_bridge.send_command` | action | Send one raw plaintext command (hex) to the keypad and log the decrypted reply. See [docs/protocol.md](docs/protocol.md). |
+| `switchbot_keypad_bridge.read_settings` | action | Read all keypad settings in one BLE connection; results arrive via `on_settings_read`. |
 
 ## 🔬 Under the hood
 
@@ -497,6 +503,32 @@ command and logs the decrypted reply.
 > The WT32-ETH01 example config wraps it in an `api:` action, exposing
 > `esphome.<device>_send_keypad_command` (a `command` hex string) that you can
 > call from **Developer Tools → Actions**. See [docs/protocol.md](docs/protocol.md).
+
+### Keypad settings as Home Assistant controls
+
+The mapped settings (see [docs/protocol.md](docs/protocol.md)) are wired in the
+WT32-ETH01 example config as native HA entities that write the matching `0f52`
+command over BLE:
+
+- `select` — **Volume** (mute/low/medium/high), **Sensitivity**, **Face
+  Recognition** trigger, **Disabling Interval**.
+- `switch` — **Fast Unlock**, **Disable Keypad** (⚠️ turning it on makes the
+  keypad inoperable).
+- `button` — **Refresh Keypad Settings**: reads every setting in one BLE
+  connection and updates the controls above to the keypad's real state.
+
+They all use your K14 at `key_id 0x45`; put it in `secrets.yaml` once as
+`keypad_k14` (the `keypad_setting` script references it). The controls are
+optimistic — the keypad must be awake/in range for a change to land.
+
+> **Fast Unlock ⚠️.** With a real SwitchBot lock, Fast Unlock keeps the keypad
+> in a tight, constant connection. Against this *emulated* lock it drains the
+> keypad battery and can stop face recognition — the keypad polls the lock
+> state every ~2 s, and because the bridge stays "unlocked" after an unlock, the
+> keypad thinks there's nothing to open and skips the scan. Set `auto_relock`
+> (e.g. `10s`) so the bridge returns to LOCKED after each unlock, or just leave
+> Fast Unlock off (recommended). While it's on, the keypad stops advertising, so
+> the bridge can't reach it — toggle Fast Unlock back off from the official app.
 
 ## ❓ FAQ
 
