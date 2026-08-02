@@ -118,6 +118,11 @@ switchbot_keypad_bridge:
   # web_username: "admin"
   # web_password: !secret web_password
 
+  # Debug/advanced: after pairing, show the keypad's communication key
+  # (key_id + K14) in the web console → Settings, and log it. It is a secret —
+  # only for decrypting your own BLE captures / reverse-engineering. Off here.
+  # show_communication_key: true
+
   # Map credential slots to names. `method` defaults to "any", `index` to -1
   # (any slot of that method). Add your own:
   # users:

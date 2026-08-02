@@ -73,6 +73,9 @@ CONF_MIN_UNLOCK_INTERVAL = "min_unlock_interval"
 CONF_WEB_USERNAME = "web_username"
 CONF_WEB_PASSWORD = "web_password"
 
+# Opt-in debug: expose the keypad's communication key (key_id + K14).
+CONF_SHOW_COMMUNICATION_KEY = "show_communication_key"
+
 # Keypad liveness / signal diagnostics.
 CONF_RSSI = "rssi"
 CONF_KEYPAD_CONNECTED = "keypad_connected"
@@ -265,6 +268,7 @@ CONFIG_SCHEMA = cv.Schema(
         # leave it open (original behaviour).
         cv.Optional(CONF_WEB_USERNAME, default="admin"): cv.string_strict,
         cv.Optional(CONF_WEB_PASSWORD): cv.string_strict,
+        cv.Optional(CONF_SHOW_COMMUNICATION_KEY, default=False): cv.boolean,
         cv.Optional(CONF_PAIRING_UI): _deprecated_pairing_ui,
         cv.Optional(CONF_UNPAIR_BUTTON): button.button_schema(
             UnpairButton,
@@ -418,6 +422,7 @@ async def to_code(config):
             config[CONF_WEB_USERNAME], config.get(CONF_WEB_PASSWORD, "")
         )
     )
+    cg.add(var.set_log_communication_key(config[CONF_SHOW_COMMUNICATION_KEY]))
 
     # Make Home Assistant show the "Visit Device" link on the device page.
     # ESPHome's api component fills `webserver_port` in DeviceInfoResponse

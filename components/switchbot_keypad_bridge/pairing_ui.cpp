@@ -65,6 +65,7 @@ bool PairingUi::start(uint16_t port) {
   reg("/api/users",         HTTP_POST, PairingUi::handle_users_set_);
   reg("/api/settings",      HTTP_GET,  PairingUi::handle_settings_get_);
   reg("/api/settings",      HTTP_POST, PairingUi::handle_settings_set_);
+  reg("/api/commkey",       HTTP_GET,  PairingUi::handle_commkey_);
 
   ESP_LOGI(TAG, "Pairing UI listening on http://<device>:%u/", port);
   return true;
@@ -370,6 +371,24 @@ esp_err_t PairingUi::handle_pair_(httpd_req_t *req) {
     return reply_error_(req, "502 Bad Gateway", err);
   }
 
+  // Opt-in debug: print the keypad's communication key. Off by default — this
+  // is a secret. Enabled via `show_communication_key: true` for users who want
+  // to decrypt their own BLE captures / reverse-engineer extra commands.
+  if (self->log_keys_) {
+    static const char hx[] = "0123456789abcdef";
+    std::string kh;
+    for (uint8_t b : key_bytes) {
+      kh.push_back(hx[b >> 4]);
+      kh.push_back(hx[b & 0x0F]);
+    }
+    ESP_LOGW(TAG, "Communication key for %s: key_id=%s key=%s",
+             found->mac_pretty.c_str(), key_id_hex.c_str(), kh.c_str());
+    // Stash for the web GUI (RAM only — re-fetched each pairing, never in NVS).
+    self->comm_key_id_ = key_id_hex;
+    self->comm_key_hex_ = kh;
+    self->comm_key_mac_ = found->mac_pretty;
+  }
+
   // Build the pairer's request.
   KeypadPairer::Request kr;
   kr.keypad_mac  = found->mac_pretty;
@@ -467,6 +486,17 @@ esp_err_t PairingUi::handle_users_set_(httpd_req_t *req) {
   cJSON *resp = cJSON_CreateObject();
   cJSON_AddBoolToObject(resp, "ok", true);
   return reply_json_(req, json_take(resp).c_str());
+}
+
+esp_err_t PairingUi::handle_commkey_(httpd_req_t *req) {
+  if (!require_auth_(req)) return ESP_OK;
+  auto *self = static_cast<PairingUi *>(req->user_ctx);
+  cJSON *o = cJSON_CreateObject();
+  cJSON_AddBoolToObject(o, "enabled", self->log_keys_);
+  cJSON_AddStringToObject(o, "key_id", self->comm_key_id_.c_str());
+  cJSON_AddStringToObject(o, "key", self->comm_key_hex_.c_str());
+  cJSON_AddStringToObject(o, "mac", self->comm_key_mac_.c_str());
+  return reply_json_(req, json_take(o).c_str());
 }
 
 esp_err_t PairingUi::handle_settings_get_(httpd_req_t *req) {

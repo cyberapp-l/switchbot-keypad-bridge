@@ -123,6 +123,10 @@ class SwitchbotKeypadBridge : public Component {
     this->web_pass_ = pass;
   }
 
+  // Opt-in debug: log the keypad's communication key (key_id + K14) during
+  // pairing — lets you decrypt your own BLE captures. Off by default (secret).
+  void set_log_communication_key(bool on) { this->log_comm_key_ = on; }
+
   // "A pairing is mid-flight" — used by the Unpair button to refuse while a
   // job runs. Not "is the server up" (it always is now).
   bool is_pairing_active() const { return this->pairing_ui_.is_pairing_busy(); }
@@ -314,6 +318,7 @@ class SwitchbotKeypadBridge : public Component {
   // HTTP Basic Auth credentials for the web console (empty pass = open).
   std::string web_user_{"admin"};
   std::string web_pass_{};
+  bool log_comm_key_{false};  // opt-in: log the keypad K14 at pairing
 
   // Recent lock/unlock/doorbell events, newest at the back. Written by the
   // main task, read (serialised) by the HTTP task, so guarded by its mutex.

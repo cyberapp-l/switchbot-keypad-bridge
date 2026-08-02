@@ -101,6 +101,9 @@ class PairingUi {
     this->auth_pass_ = pass;
   }
 
+  // Opt-in debug: log the keypad's communication key (key_id + K14) at pairing.
+  void set_log_keys(bool on) { this->log_keys_ = on; }
+
   // True while a blocking BLE scan started by the pairing flow is in progress.
   // The component's battery scan checks this to avoid fighting over the shared
   // NimBLE scan singleton now that the server stays up permanently.
@@ -132,6 +135,7 @@ class PairingUi {
   static esp_err_t handle_users_set_(httpd_req_t *req);
   static esp_err_t handle_settings_get_(httpd_req_t *req);
   static esp_err_t handle_settings_set_(httpd_req_t *req);
+  static esp_err_t handle_commkey_(httpd_req_t *req);
 
   static esp_err_t reply_json_(httpd_req_t *req, const char *json,
                                const char *status = "200 OK");
@@ -144,6 +148,8 @@ class PairingUi {
   KeypadPairer   pairer_{};
   std::string    auth_user_{"admin"};
   std::string    auth_pass_{};  // empty = no auth
+  bool           log_keys_{false};  // opt-in: expose K14 at pairing
+  std::string    comm_key_id_, comm_key_hex_, comm_key_mac_;  // last fetched K14 (RAM)
   std::atomic<bool> ble_scan_busy_{false};
   std::array<uint8_t, 16> shared_key_{};
   const uint8_t *html_{nullptr};

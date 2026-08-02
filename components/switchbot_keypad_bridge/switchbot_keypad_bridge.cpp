@@ -179,6 +179,7 @@ void SwitchbotKeypadBridge::setup() {
 
   this->pairing_ui_.set_shared_key(this->shared_key_);
   this->pairing_ui_.set_credentials(this->web_user_, this->web_pass_);
+  this->pairing_ui_.set_log_keys(this->log_comm_key_);
   this->pairing_ui_.set_events_provider([this]() { return this->events_json_(); });
   this->pairing_ui_.set_users_get_provider([this]() { return this->web_users_json_(); });
   this->pairing_ui_.set_users_set_handler(

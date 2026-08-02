@@ -550,6 +550,15 @@
     border-radius: var(--radius-input); background: var(--sb-card-bg);
     color: var(--sb-primary-text); font: inherit; font-size: 14px;
   }
+  .commkey-card {
+    margin-top: 20px; padding: 14px; border: 1px dashed var(--sb-theme);
+    border-radius: var(--radius-input); background: var(--sb-window-bg);
+  }
+  .commkey-title { font-weight: 700; font-size: 14px; margin-bottom: 8px; color: var(--sb-theme); }
+  .commkey-row { display: flex; align-items: baseline; gap: 8px; margin: 4px 0; font-size: 13px; }
+  .commkey-row span { color: var(--sb-cc2); min-width: 54px; }
+  .commkey-row code { font-family: ui-monospace, monospace; word-break: break-all; user-select: all; }
+  .commkey-val { font-size: 12px; }
 
   /* RTL: keep numeric/mac runs LTR inside a right-to-left page. */
   [dir="rtl"] .kp-mac, [dir="rtl"] .event-time { direction: ltr; unicode-bidi: isolate; }
@@ -801,6 +810,14 @@
     </div>
     <button id="set-save" class="btn btn-primary" type="button" onclick="saveSettings()">Save</button>
     <p class="footnote" id="set-status"></p>
+
+    <!-- Communication key (only when show_communication_key: true) -->
+    <div id="commkey-card" class="commkey-card" style="display:none;">
+      <div class="commkey-title" id="commkey-title">Keypad communication key</div>
+      <div class="commkey-row"><span id="commkey-idlabel">Key ID</span> <code id="commkey-id">—</code></div>
+      <div class="commkey-row"><span id="commkey-keylabel">Key</span> <code id="commkey-key" class="commkey-val">—</code></div>
+      <p class="footnote" id="commkey-note"></p>
+    </div>
   </section>
 
 </main>
@@ -853,6 +870,9 @@
       set_min_label: 'Debounce duplicate unlocks (seconds, 0 = off)',
       set_scan_label: 'Keypad scanning (battery, signal & alarms)',
       set_save: 'Save', set_loading: 'Loading…', set_saving: 'Saving…', set_saved: 'Saved.',
+      commkey_title: 'Keypad communication key', commkey_id: 'Key ID', commkey_key: 'Key',
+      commkey_note_ok: 'Secret — for decrypting your own BLE captures.',
+      commkey_note_pair: 'Pair a keypad to populate the key.',
     },
     he: {
       topbar: 'גשר קודן', tab_pair: 'צימוד', tab_activity: 'פעילות',
@@ -889,6 +909,9 @@
       set_min_label: 'השהיית פתיחות כפולות (שניות, 0 = כבוי)',
       set_scan_label: 'סריקת הקודן (סוללה, אות ואזעקות)',
       set_save: 'שמור', set_loading: 'טוען…', set_saving: 'שומר…', set_saved: 'נשמר.',
+      commkey_title: 'מפתח התקשורת של הקודן', commkey_id: 'מזהה מפתח', commkey_key: 'מפתח',
+      commkey_note_ok: 'סוד — לפענוח לכידות BLE שלך.',
+      commkey_note_pair: 'צַמֵּד קודן כדי לאכלס את המפתח.',
     },
   };
   // selector -> string key, for the static (non-JS-generated) elements.
@@ -910,6 +933,8 @@
     '#set-subtitle': 'set_subtitle', '#set-battery-label': 'set_battery_label',
     '#set-min-label': 'set_min_label', '#set-scan-label': 'set_scan_label',
     '#set-save': 'set_save',
+    '#commkey-title': 'commkey_title', '#commkey-idlabel': 'commkey_id',
+    '#commkey-keylabel': 'commkey_key',
   };
   let LANG = 'en';
   function t(k) { return (STRINGS[LANG] && STRINGS[LANG][k]) || STRINGS.en[k] || k; }
@@ -972,6 +997,21 @@
     } catch (err) {
       setSetStatus(err.message);
     }
+    // Communication key (debug) — only shown when enabled on the device.
+    try {
+      const ck = await api('GET', '/api/commkey');
+      const card = document.getElementById('commkey-card');
+      if (ck && ck.enabled) {
+        card.style.display = '';
+        document.getElementById('commkey-id').textContent = ck.key_id || '—';
+        document.getElementById('commkey-key').textContent = ck.key || '—';
+        document.getElementById('commkey-note').textContent = ck.key
+          ? (t('commkey_note_ok') + (ck.mac ? (' (' + ck.mac + ')') : ''))
+          : t('commkey_note_pair');
+      } else {
+        card.style.display = 'none';
+      }
+    } catch (_) { /* ignore */ }
   }
   async function saveSettings() {
     let battery = parseInt(document.getElementById('set-battery').value, 10);
