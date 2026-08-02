@@ -57,6 +57,19 @@ logger:
   level: VERBOSE
 
 api:
+  # Exposes a Home Assistant service `esphome.<device>_send_keypad_command`.
+  # (switchbot_keypad_bridge.send_command is an ESPHome *action* — a YAML
+  # building block — so it is NOT itself an HA service; this wrapper makes it
+  # one.) Call it from HA → Developer Tools → Actions with a hex command, e.g.
+  #   command: "0f52010c0202"   # volume — hypothesis, see docs/protocol.md
+  # The decrypted reply is logged at WARN (send_command: … decrypted=…).
+  actions:
+    - action: send_keypad_command
+      variables:
+        command: string
+      then:
+        - switchbot_keypad_bridge.send_command:
+            command: !lambda "return command;"
 
 ota:
   - platform: esphome
@@ -156,3 +169,19 @@ switchbot_keypad_bridge:
 
   # on_doorbell:
   #   - logger.log: "Doorbell pressed"
+
+# Experiment helper for the raw-command action (see docs/protocol.md). It never
+# runs on its own — call `keypad_set_volume` from the API / HA dev tools to try
+# the (unverified) volume command and watch the decrypted reply in the log.
+# `key`/`key_id` are omitted, so it reuses the paired communication key.
+script:
+  - id: keypad_set_volume
+    parameters:
+      level: int # 1 = low, 2 = medium, 3 = high
+    then:
+      - switchbot_keypad_bridge.send_command:
+          # 0f 52 01 0c <level> 02  — volume SET (hypothesis; verify on hardware)
+          command: !lambda |-
+            char buf[13];
+            sprintf(buf, "0f52010c0%d02", level);
+            return std::string(buf);

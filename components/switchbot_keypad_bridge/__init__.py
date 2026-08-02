@@ -372,6 +372,7 @@ async def send_command_action_to_code(config, action_id, template_arg, args):
     cg.add(var.set_key(key))
     key_id = await cg.templatable(config[CONF_KEY_ID], args, cg.int_)
     cg.add(var.set_key_id(key_id))
+    return var
 
 
 async def to_code(config):

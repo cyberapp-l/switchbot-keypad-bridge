@@ -128,6 +128,27 @@ on_...:
 Leave `key`/`key_id` unset to reuse the paired key. The decrypted response is
 logged at `WARN` as `send_command: … decrypted=<hex>`.
 
+### Calling it from Home Assistant
+
+`send_command` is an ESPHome **action** — a YAML building block — so it is *not*
+itself a Home Assistant service and won't show up in HA on its own. Wrap it in
+an `api:` action to expose a service you can call from HA → Developer Tools →
+Actions:
+
+```yaml
+api:
+  actions:
+    - action: send_keypad_command
+      variables:
+        command: string
+      then:
+        - switchbot_keypad_bridge.send_command:
+            command: !lambda "return command;"
+```
+
+That surfaces `esphome.<device>_send_keypad_command`, taking a `command` hex
+string. (The WT32-ETH01 example config ships this wrapper.)
+
 ## Reproducing a capture
 
 1. Android → Developer options → **Enable Bluetooth HCI snoop log**.

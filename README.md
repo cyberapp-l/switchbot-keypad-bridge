@@ -490,8 +490,13 @@ To get your K14, set `show_communication_key: true` and read it from the web
 console → **Settings** (off by default; it is a device secret — keep it out of
 public configs). To try a command from the bridge itself, use the
 `switchbot_keypad_bridge.send_command` action, which sends one raw plaintext
-command and logs the decrypted reply. See [docs/protocol.md](docs/protocol.md)
-for both.
+command and logs the decrypted reply.
+
+> **Calling it from Home Assistant.** `send_command` is an ESPHome *action* (a
+> YAML building block), not an HA service, so it won't appear in HA by itself.
+> The WT32-ETH01 example config wraps it in an `api:` action, exposing
+> `esphome.<device>_send_keypad_command` (a `command` hex string) that you can
+> call from **Developer Tools → Actions**. See [docs/protocol.md](docs/protocol.md).
 
 ## ❓ FAQ
 
