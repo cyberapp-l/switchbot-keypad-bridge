@@ -104,30 +104,33 @@ On an unlock event the plaintext carries the credential type and slot index:
 This is what the firmware surfaces as the `method` + `index` (and mapped `name`)
 on the unlock trigger / `last_user` sensor.
 
-### Discovered SET/GET parameters
+### Settings parameters
 
-Seen in the settings capture (`0f 52 01 <param> <value>` / `0f 53 01 <param>`):
+Config lives in a `0f 52 01 <param> <value>` (SET) / `0f 53 01 <param>` (GET)
+family. Each parameter was mapped by capturing the official app while changing
+one setting, then confirming the **GET read-back matched the app's shown value**
+(e.g. GET `0x0b` → `1e` = 30 while the app showed a 30 s "disabling interval").
 
-| param | seen values           | GET reply | meaning |
-|-------|-----------------------|-----------|---------|
-| `0x02`| `01`, `02`            | —         | a mode/enable toggle |
-| `0x07`| `01`                  | `00`      | a status/feature flag |
-| `0x0c`| `01 02` … `04 02`     | `02 04`   | **volume** — confirmed on hardware (see below) |
-| `0x0d`| GET only              | —         | paired with `0x0c` (read-back of the same setting group) |
+| param | setting (SwitchBot app screen) | values | SET example |
+|-------|--------------------------------|--------|-------------|
+| `0x02`| **Disable Keypad** ⚠️           | `01` = off (keypad active), `02` = on (all buttons dead) | `0f52010202` |
+| `0x07`| **Fast Unlock**                | `00` = off, `01` = on (faster, more battery) | `0f52010701` |
+| `0x08`| **Recognition Sensitivity**    | `01` = Low, `02` = Medium, `03` = High | `0f52010803` |
+| `0x0a`| **Trigger Face Recognition**   | `01` = Auto, `02` = Manual, `03` = Custom | `0f52010a01` |
+| `0x0b`| **Disabling Interval**         | raw **seconds**, hex: `00`/`05`/`0f`/`1e`/`3c` = 0/5/15/30/60 s | `0f52010b1e` |
+| `0x0c`| **Beep Volume**                | `01` mute / `02` low / `03` medium / `04` high (trailing `02` tag) | `0f52010c0402` |
+| `0x0d`| paired with the volume group (GET only) | — | — |
 
-**Volume — CONFIRMED on hardware.** `0f 52 01 0c 0X 02`, where `0X` is a
-**4-level** value (the trailing `02` is a fixed tag):
+GET-confirmed against the app: `0x08` → `03` (High), `0x0a` → `01` (Auto),
+`0x0b` → `1e` (30 s), `0x07` → `00` (Fast Unlock off), `0x0c` → `02 04`.
 
-| command          | volume  |
-|------------------|---------|
-| `0f52010c0102`   | mute    |
-| `0f52010c0202`   | low     |
-| `0f52010c0302`   | medium  |
-| `0f52010c0402`   | high    |
+`0x02` (Disable Keypad) and `0x07` (Fast Unlock) were assigned from the order the
+settings screens were visited in the capture; both ended in the state the app
+showed. **Verify `0x02` before relying on it — enabling it makes the keypad
+inoperable.** To read any value back, GET it, e.g. `0f 53 01 0b`.
 
-The keypad acks the SET with a bare header (no payload), exactly as it does for
-the official app. To read the current level back, GET it: `0f 53 01 0c`
-(returned `02 04` in the capture).
+Volume (`0x0c`) is the one value that takes two bytes (`0X 02`); every other
+setting's value is a single byte. All SETs reply with a bare ack (no payload).
 
 ## Trying commands from this firmware
 
