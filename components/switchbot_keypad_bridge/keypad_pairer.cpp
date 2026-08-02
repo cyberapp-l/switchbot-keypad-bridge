@@ -342,8 +342,21 @@ void KeypadPairer::execute_(Request &req) {
   // fails fast. Retry a few times (re-terminating any peripheral link each
   // round) to catch the next connectable window. Waking the keypad by hand
   // (tap a key) right before sending widens that window a lot.
+  //
+  // The official app connects reliably because a phone is a *pure central*. Our
+  // bridge is dual-role: it advertises continuously as a SwitchBot Lock while
+  // trying to initiate this connection, so the radio is split between
+  // advertising and initiating. Silence our advertising for the duration of the
+  // connect + command (RAII restarts it on every exit path) so we behave like
+  // the phone: one radio, one job.
+  struct AdvPause {
+    AdvPause() { NimBLEDevice::stopAdvertising(); }
+    ~AdvPause() { NimBLEDevice::startAdvertising(); }
+  } adv_pause;
+
   NimBLEClient *client = NimBLEDevice::createClient();
   client->setConnectTimeout(8000);  // ms (NimBLE-cpp 2.x uses ms, not seconds)
+  client->setConnectRetries(2);     // let NimBLE retry the link-layer connect itself
   bool connected = false;
   for (int attempt = 1; attempt <= 3 && !connected; attempt++) {
     struct ble_gap_conn_desc desc{};
@@ -355,7 +368,8 @@ void KeypadPairer::execute_(Request &req) {
     }
     connected = client->connect(target);
     if (!connected) {
-      ESP_LOGW(TAG, "Connect attempt %d/3 failed", attempt);
+      ESP_LOGW(TAG, "Connect attempt %d/3 failed (NimBLE rc=%d)", attempt,
+               client->getLastError());
       vTaskDelay(pdMS_TO_TICKS(1000));
     }
   }

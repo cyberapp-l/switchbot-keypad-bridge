@@ -145,6 +145,14 @@ lock/unlock-style traffic, but the keypad may not honour settings writes there.
 The decrypted response is logged at `WARN` as `send_command: … decrypted=<hex>`.
 Get your K14 from `show_communication_key` (web console → **Settings**).
 
+> **"Could not connect to the keypad."** The keypad is only *connectable* in
+> short windows (it sleeps between interactions), whereas the official app — a
+> pure BLE central — catches those windows easily. The bridge is dual-role
+> (it also advertises as a lock), so it retries the connect a few times and
+> pauses its own advertising for the attempt. If it still fails, **wake the
+> keypad by tapping a key right before** sending, and keep it within ~2 m. The
+> failure log includes the NimBLE `rc=` code for diagnosis.
+
 ### Calling it from Home Assistant
 
 `send_command` is an ESPHome **action** — a YAML building block — so it is *not*
