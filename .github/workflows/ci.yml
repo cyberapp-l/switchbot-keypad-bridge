@@ -53,7 +53,7 @@ jobs:
 
       - name: Provide dummy secrets for the build
         run: |
-          printf 'wifi_ssid: "ci"\nwifi_password: "ci-password"\nota_password: "ci-ota-password"\n' > secrets.yaml
+          printf 'wifi_ssid: "ci"\nwifi_password: "ci-password"\nota_password: "ci-ota-password"\nkeypad_k14: "00000000000000000000000000000000"\n' > secrets.yaml
 
       - name: Compile
         run: esphome compile switchbot-keypad-bridge-wt32-eth01.yaml

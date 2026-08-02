@@ -182,22 +182,108 @@ switchbot_keypad_bridge:
   # on_doorbell:
   #   - logger.log: "Doorbell pressed"
 
-# Set the keypad's beep volume (confirmed on hardware — see docs/protocol.md).
-# Call `keypad_set_volume` from the API / HA dev tools; it never runs on its own.
-# Volume lives on the K14 / key_id 0x45 channel, so pass your K14 as `key`
-# (empty would fall back to the bridge's session key, which the keypad ignores
-# for settings writes).
+# ── Keypad settings as native Home Assistant controls ──────────────────────
+# These select/switch entities send the matching 0f52 SET command over BLE (the
+# parameter map is in docs/protocol.md), so you can change the keypad's settings
+# straight from Home Assistant. Notes:
+#   • They are optimistic — the shown state is what you last set, not read back,
+#     and the keypad must be awake/in range for the command to actually land
+#     (tap a key on it first if a change doesn't take).
+#   • They all use the keypad's communication key (K14) at key_id 0x45. Put your
+#     K14 in secrets.yaml ONCE (it is referenced only in the keypad_setting
+#     script below):
+#         keypad_k14: "0286...."   # from show_communication_key (web → Settings)
+#   • Don't want keypad settings control? Delete this script + the select/switch
+#     blocks (and the keypad_k14 secret).
 script:
-  - id: keypad_set_volume
+  - id: keypad_setting
     parameters:
-      level: int # 1 = mute, 2 = low, 3 = medium, 4 = high
-      key: string # your K14 (32 hex chars); needed for this settings command
+      command: string
     then:
       - switchbot_keypad_bridge.send_command:
-          # 0f 52 01 0c <level> 02  — volume SET (level 1-4, trailing 02 is fixed)
-          command: !lambda |-
-            char buf[13];
-            sprintf(buf, "0f52010c0%d02", level);
-            return std::string(buf);
-          key: !lambda "return key;"
+          command: !lambda "return command;"
+          key: !secret keypad_k14
           key_id: 0x45
+
+select:
+  - platform: template
+    name: "Keypad Volume"
+    icon: "mdi:volume-high"
+    entity_category: config
+    optimistic: true
+    options: ["Mute", "Low", "Medium", "High"]
+    set_action:
+      - script.execute:
+          id: keypad_setting
+          command: !lambda |-
+            if (x == "Mute") return std::string("0f52010c0102");
+            if (x == "Low") return std::string("0f52010c0202");
+            if (x == "Medium") return std::string("0f52010c0302");
+            return std::string("0f52010c0402");  // High
+
+  - platform: template
+    name: "Keypad Sensitivity"
+    icon: "mdi:signal-distance-variant"
+    entity_category: config
+    optimistic: true
+    options: ["Low", "Medium", "High"]
+    set_action:
+      - script.execute:
+          id: keypad_setting
+          command: !lambda |-
+            if (x == "Low") return std::string("0f52010801");
+            if (x == "Medium") return std::string("0f52010802");
+            return std::string("0f52010803");  // High
+
+  - platform: template
+    name: "Keypad Face Recognition"
+    icon: "mdi:face-recognition"
+    entity_category: config
+    optimistic: true
+    options: ["Auto", "Manual", "Custom"]
+    set_action:
+      - script.execute:
+          id: keypad_setting
+          command: !lambda |-
+            if (x == "Auto") return std::string("0f52010a01");
+            if (x == "Manual") return std::string("0f52010a02");
+            return std::string("0f52010a03");  // Custom
+
+  - platform: template
+    name: "Keypad Disabling Interval"
+    icon: "mdi:timer-sand"
+    entity_category: config
+    optimistic: true
+    options: ["0s", "5s", "15s", "30s", "60s"]
+    set_action:
+      - script.execute:
+          id: keypad_setting
+          command: !lambda |-
+            if (x == "0s") return std::string("0f52010b00");
+            if (x == "5s") return std::string("0f52010b05");
+            if (x == "15s") return std::string("0f52010b0f");
+            if (x == "30s") return std::string("0f52010b1e");
+            return std::string("0f52010b3c");  // 60s
+
+switch:
+  - platform: template
+    name: "Keypad Fast Unlock"
+    icon: "mdi:flash"
+    entity_category: config
+    optimistic: true
+    turn_on_action:
+      - script.execute: { id: keypad_setting, command: "0f52010701" }
+    turn_off_action:
+      - script.execute: { id: keypad_setting, command: "0f52010700" }
+
+  # WARNING: turning this ON makes the keypad inoperable — every button and
+  # unlock method stops working until you switch it back off.
+  - platform: template
+    name: "Keypad Disable"
+    icon: "mdi:lock-off-outline"
+    entity_category: config
+    optimistic: true
+    turn_on_action:
+      - script.execute: { id: keypad_setting, command: "0f52010202" }
+    turn_off_action:
+      - script.execute: { id: keypad_setting, command: "0f52010201" }

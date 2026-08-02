@@ -200,6 +200,12 @@ optional `key` (your K14) and `key_id` (`69` for the 0x45 app channel). Leave
 `key`/`key_id` blank for the session-key channel. (The WT32-ETH01 example config
 ships this wrapper.)
 
+For the mapped settings above, the example config also ships **native HA
+controls** — `select` entities for volume, sensitivity, face-recognition trigger
+and disabling interval, and `switch` entities for Fast Unlock and Disable Keypad
+— each wired to the right `0f52` SET through a small `keypad_setting` script that
+injects your K14. Set `keypad_k14` in `secrets.yaml` once and they just work.
+
 ## Reproducing a capture
 
 1. Android → Developer options → **Enable Bluetooth HCI snoop log**.
