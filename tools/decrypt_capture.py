@@ -138,7 +138,7 @@ def main():
                 # get exactly this — no data comes back, only GET (0f53) returns
                 # a payload — so show it instead of hiding it.
                 if kind == "RESP":
-                    print(f"{kind:4} (bare ack — no payload; normal for a SET)")
+                    print(f"{kind:4} (bare ack - no payload; normal for a SET)")
                 continue
             pt = ctr_decrypt(k14, iv, ct)
             label = decode(pt) if kind == "CMD" else "response"
