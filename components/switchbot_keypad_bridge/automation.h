@@ -52,7 +52,8 @@ class SendCommandAction : public Action<Ts...>, public Parented<SwitchbotKeypadB
   TEMPLATABLE_VALUE(std::string, command)
   TEMPLATABLE_VALUE(std::string, key)
   TEMPLATABLE_VALUE(int, key_id)
-  void play(Ts... x) override {
+  // Params are passed by const-ref to match Action::play in current ESPHome.
+  void play(const Ts &...x) override {
     this->parent_->send_raw_command(this->command_.value(x...), this->key_.value(x...),
                                     this->key_id_.value(x...));
   }
