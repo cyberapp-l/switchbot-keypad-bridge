@@ -134,7 +134,12 @@ def main():
         if v and v[0] in (0x57, 0x01) and len(v) >= 4 and iv:
             ct = v[4:]
             if not ct:
-                continue  # bare ack
+                # A header with no ciphertext is a bare ack. SET (0f52) writes
+                # get exactly this — no data comes back, only GET (0f53) returns
+                # a payload — so show it instead of hiding it.
+                if kind == "RESP":
+                    print(f"{kind:4} (bare ack — no payload; normal for a SET)")
+                continue
             pt = ctr_decrypt(k14, iv, ct)
             label = decode(pt) if kind == "CMD" else "response"
             line = f"{kind:4} PT={pt.hex():<24} {label}"

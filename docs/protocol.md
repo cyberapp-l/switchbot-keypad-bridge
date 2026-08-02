@@ -79,10 +79,16 @@ precedes most operations.
 |----------------|----------------------------------|-------|
 | `0f 4e 01 03`  | lock / unlock                    | unlock reports method + credential index (see below) |
 | `0f 4f 81`     | state poll                       | keypad returns lock/battery state |
-| `0f 52 01 <p> <v…>` | **SET** parameter `p` to value `v` | config writes |
-| `0f 53 01 <p>` | **GET** parameter `p`            | config reads |
+| `0f 52 01 <p> <v…>` | **SET** parameter `p` to value `v` | config writes; keypad replies with a bare ack |
+| `0f 53 01 <p>` | **GET** parameter `p`            | config reads; keypad replies with the value |
 | `01 03`        | doorbell / call button           | |
 | `00 05 …`      | credential op (add/modify code?) | passcode management |
+
+**Response semantics.** A **SET** (`0f52`) is fire-and-forget: the keypad returns
+only a bare 4-byte header (`01 <key_id> <iv0> <iv1>`) with *no* encrypted payload —
+so an empty `decrypted=` from `send_command` after a SET is success, not failure.
+Only a **GET** (`0f53`) returns an encrypted data payload. (The official app
+behaves identically — its SET responses are the same bare acks.)
 
 ### Unlock method byte
 
@@ -102,15 +108,18 @@ on the unlock trigger / `last_user` sensor.
 
 Seen in the settings capture (`0f 52 01 <param> <value>` / `0f 53 01 <param>`):
 
-| param | seen values           | working hypothesis |
-|-------|-----------------------|--------------------|
-| `0x02`| `01`, `02`            | a mode/enable toggle |
-| `0x07`| `01` (GET `0f 53 07 03`) | a status/feature flag |
-| `0x0c`| `01 02`, `02 02`, `03 02` | **volume** — first byte 1/2/3 = low/med/high, second byte `02` a units/type tag |
-| `0x0d`| GET only              | paired with `0x0c` (read-back of the same setting group) |
+| param | seen values           | GET reply | working hypothesis |
+|-------|-----------------------|-----------|--------------------|
+| `0x02`| `01`, `02`            | —         | a mode/enable toggle |
+| `0x07`| `01`                  | `00`      | a status/feature flag |
+| `0x0c`| `01 02`, `02 02`, `03 02` | `02 04` | **volume** — first byte 1/2/3 = low/med/high, second byte `02` a units/type tag |
+| `0x0d`| GET only              | —         | paired with `0x0c` (read-back of the same setting group) |
 
-**Volume hypothesis** (untested on hardware): `0f 52 01 0c 0X 02` with
-`0X ∈ {01,02,03}`. Try it with `send_command` and watch the decrypted response.
+**Volume:** `0f 52 01 0c 0X 02` with `0X ∈ {01,02,03}`. Confirmed reproducible
+from this firmware — the keypad acks the SET exactly as it does for the official
+app. To read the current value back, GET it: `0f 53 01 0c` returned `02 04` in
+the capture. (Whether the audible volume changes still needs an ear on the
+device — the BLE side is verified.)
 
 ## Trying commands from this firmware
 
