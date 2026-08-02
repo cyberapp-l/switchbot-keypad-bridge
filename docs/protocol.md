@@ -108,18 +108,26 @@ on the unlock trigger / `last_user` sensor.
 
 Seen in the settings capture (`0f 52 01 <param> <value>` / `0f 53 01 <param>`):
 
-| param | seen values           | GET reply | working hypothesis |
-|-------|-----------------------|-----------|--------------------|
+| param | seen values           | GET reply | meaning |
+|-------|-----------------------|-----------|---------|
 | `0x02`| `01`, `02`            | —         | a mode/enable toggle |
 | `0x07`| `01`                  | `00`      | a status/feature flag |
-| `0x0c`| `01 02`, `02 02`, `03 02` | `02 04` | **volume** — first byte 1/2/3 = low/med/high, second byte `02` a units/type tag |
+| `0x0c`| `01 02` … `04 02`     | `02 04`   | **volume** — confirmed on hardware (see below) |
 | `0x0d`| GET only              | —         | paired with `0x0c` (read-back of the same setting group) |
 
-**Volume:** `0f 52 01 0c 0X 02` with `0X ∈ {01,02,03}`. Confirmed reproducible
-from this firmware — the keypad acks the SET exactly as it does for the official
-app. To read the current value back, GET it: `0f 53 01 0c` returned `02 04` in
-the capture. (Whether the audible volume changes still needs an ear on the
-device — the BLE side is verified.)
+**Volume — CONFIRMED on hardware.** `0f 52 01 0c 0X 02`, where `0X` is a
+**4-level** value (the trailing `02` is a fixed tag):
+
+| command          | volume  |
+|------------------|---------|
+| `0f52010c0102`   | mute    |
+| `0f52010c0202`   | low     |
+| `0f52010c0302`   | medium  |
+| `0f52010c0402`   | high    |
+
+The keypad acks the SET with a bare header (no payload), exactly as it does for
+the official app. To read the current level back, GET it: `0f 53 01 0c`
+(returned `02 04` in the capture).
 
 ## Trying commands from this firmware
 
@@ -144,7 +152,7 @@ lock-emulation channel. So to replay them you must pass your K14 explicitly:
 ```yaml
 on_...:
   - switchbot_keypad_bridge.send_command:
-      command: "0f52010c0202"                     # SET 0x0c = 02 (medium?), tag 02
+      command: "0f52010c0202"                     # SET volume = low (0x0c, level 2)
       key: "0286…"                                # your K14 (32 hex chars)
       key_id: 0x45
 ```

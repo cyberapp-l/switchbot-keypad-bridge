@@ -447,7 +447,15 @@ void KeypadPairer::execute_(Request &req) {
     ESP_LOGW(TAG, "send_command: write=%s response raw=%s decrypted=%s",
              ok ? "ok" : "FAILED", resp_hex.c_str(), dec_hex.c_str());
 
+    // Close the command link cleanly. disconnect() only *initiates* the GAP
+    // teardown, so wait for it to actually complete before deleting the client
+    // — that way the keypad drops the link and returns to low-power idle right
+    // away instead of holding a connection open (and draining its battery)
+    // until the supervision timeout expires.
     client->disconnect();
+    for (int i = 0; i < 30 && client->isConnected(); ++i) {
+      vTaskDelay(pdMS_TO_TICKS(50));  // up to ~1.5 s
+    }
     NimBLEDevice::deleteClient(client);
     if (ok) {
       this->set_success_(req.keypad_mac, family);

@@ -481,7 +481,7 @@ The keypad's GATT traffic is AES-128-CTR encrypted with a per-device
 - **[docs/protocol.md](docs/protocol.md)** — reverse-engineered notes on the
   frame format, IV negotiation, the command families (`0f4e` lock/unlock,
   `0f52`/`0f53` SET/GET, credential ops), the unlock-method byte, and the
-  discovered parameters (including a volume hypothesis). Clean-room, best-effort.
+  discovered parameters (including the confirmed 4-level beep volume). Clean-room.
 - **[tools/decrypt_capture.py](tools/decrypt_capture.py)** — decrypts an Android
   `btsnoop_hci.log` of the official app given your K14, and lists the distinct
   commands it saw. A fast way to discover new parameters.

@@ -61,7 +61,7 @@ api:
   # (switchbot_keypad_bridge.send_command is an ESPHome *action* — a YAML
   # building block — so it is NOT itself an HA service; this wrapper makes it
   # one.) Call it from HA → Developer Tools → Actions, e.g.
-  #   command: "0f52010c0202"   # volume — hypothesis, see docs/protocol.md
+  #   command: "0f52010c0202"   # set beep volume = low (see docs/protocol.md)
   #
   # WHICH KEY encrypts the command matters:
   #   • Leave key/key_id empty → the bridge's own session key (lock-emulation
@@ -182,19 +182,19 @@ switchbot_keypad_bridge:
   # on_doorbell:
   #   - logger.log: "Doorbell pressed"
 
-# Experiment helper for the raw-command action (see docs/protocol.md). It never
-# runs on its own — call `keypad_set_volume` from the API / HA dev tools to try
-# the (unverified) volume command and watch the decrypted reply in the log.
-# Volume was captured on the K14 / key_id 0x45 channel, so pass your K14 as the
-# `key` parameter (empty would fall back to the bridge's session key instead).
+# Set the keypad's beep volume (confirmed on hardware — see docs/protocol.md).
+# Call `keypad_set_volume` from the API / HA dev tools; it never runs on its own.
+# Volume lives on the K14 / key_id 0x45 channel, so pass your K14 as `key`
+# (empty would fall back to the bridge's session key, which the keypad ignores
+# for settings writes).
 script:
   - id: keypad_set_volume
     parameters:
-      level: int # 1 = low, 2 = medium, 3 = high
+      level: int # 1 = mute, 2 = low, 3 = medium, 4 = high
       key: string # your K14 (32 hex chars); needed for this settings command
     then:
       - switchbot_keypad_bridge.send_command:
-          # 0f 52 01 0c <level> 02  — volume SET (hypothesis; verify on hardware)
+          # 0f 52 01 0c <level> 02  — volume SET (level 1-4, trailing 02 is fixed)
           command: !lambda |-
             char buf[13];
             sprintf(buf, "0f52010c0%d02", level);
