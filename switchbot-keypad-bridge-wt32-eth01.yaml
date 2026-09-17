@@ -13,6 +13,11 @@
 
 esphome:
   name: switchbot-keypad-bridge
+  # Fork version — surfaces in Home Assistant device info. Bump on each release
+  # together with the CHANGELOG (see the top of CHANGELOG.md).
+  project:
+    name: cyberapp-l.switchbot-keypad-bridge
+    version: "1.0.0"
 
 esp32:
   board: esp32dev            # WT32-ETH01 is a plain ESP32-WROOM-32

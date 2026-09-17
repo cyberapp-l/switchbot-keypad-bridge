@@ -1,5 +1,10 @@
 esphome:
   name: switchbot-keypad-bridge
+  # Fork version — surfaces in Home Assistant device info. Bump on each release
+  # together with the CHANGELOG (see the top of CHANGELOG.md).
+  project:
+    name: cyberapp-l.switchbot-keypad-bridge
+    version: "1.0.0"
 
 esp32:
   board: seeed_xiao_esp32s3
