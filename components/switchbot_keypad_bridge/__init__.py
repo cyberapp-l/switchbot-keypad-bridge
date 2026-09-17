@@ -594,6 +594,10 @@ async def to_code(config):
     add_idf_sdkconfig_option("CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL", True)
     include_builtin_idf_component("esp_http_client")
     include_builtin_idf_component("esp-tls")
-    # cJSON (cloud_client.cpp + the *_json_ builders). Newer ESP-IDF no longer
-    # provides it to the src component transitively, so require it explicitly.
+    # Newer ESP-IDF/ESPHome no longer expose these to the src component
+    # transitively, so require them explicitly (else "cJSON.h" /
+    # "esp_http_server.h: No such file or directory"):
+    #   json            — cloud_client.cpp + the *_json_ builders (cJSON)
+    #   esp_http_server — the pairing/config web console (pairing_ui.*)
     include_builtin_idf_component("json")
+    include_builtin_idf_component("esp_http_server")
