@@ -81,5 +81,13 @@ class SettingsReadTrigger : public Trigger<std::vector<int>> {
   }
 };
 
+// switchbot_keypad_bridge.rearm — return the emulated lock to LOCKED so the
+// keypad re-enables passive face/palm scanning (see SwitchbotKeypadBridge::rearm).
+template<typename... Ts>
+class RearmAction : public Action<Ts...>, public Parented<SwitchbotKeypadBridge> {
+ public:
+  void play(const Ts &...x) override { this->parent_->rearm(); }
+};
+
 }  // namespace switchbot_keypad_bridge
 }  // namespace esphome

@@ -148,6 +148,7 @@ SendCommandAction = switchbot_keypad_bridge_ns.class_(
 ReadSettingsAction = switchbot_keypad_bridge_ns.class_(
     "ReadSettingsAction", automation.Action
 )
+RearmAction = switchbot_keypad_bridge_ns.class_("RearmAction", automation.Action)
 
 
 def _deprecated_pairing_ui(value):
@@ -412,6 +413,23 @@ async def read_settings_action_to_code(config, action_id, template_arg, args):
     cg.add(var.set_key(key))
     key_id = await cg.templatable(config[CONF_KEY_ID], args, cg.int_)
     cg.add(var.set_key_id(key_id))
+    return var
+
+
+@automation.register_action(
+    "switchbot_keypad_bridge.rearm",
+    RearmAction,
+    automation.maybe_simple_id(
+        {
+            cv.GenerateID(): cv.use_id(SwitchbotKeypadBridge),
+        }
+    ),
+    # play() just flips the in-memory lock state and returns.
+    synchronous=True,
+)
+async def rearm_action_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
     return var
 
 

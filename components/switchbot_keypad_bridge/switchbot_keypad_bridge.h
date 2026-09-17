@@ -153,6 +153,13 @@ class SwitchbotKeypadBridge : public Component {
   // parameter (see SETTINGS_READ_PARAMS). `key_hex`/`key_id` as send_raw_command.
   void read_settings(const std::string &key_hex, int key_id);
 
+  // Rearm (switchbot_keypad_bridge.rearm action): immediately return the
+  // emulated lock to LOCKED so the keypad's next state poll re-enables passive
+  // face/palm scanning, and cancel any pending auto_relock timer. Call this from
+  // an automation on a confirmed door-closed event (with auto_relock: 0s) for
+  // closure-driven rearming instead of the blind timer. No HA lock event fires.
+  void rearm();
+
   void add_on_lock_callback(std::function<void()> &&callback) {
     this->on_lock_callbacks_.add(std::move(callback));
   }

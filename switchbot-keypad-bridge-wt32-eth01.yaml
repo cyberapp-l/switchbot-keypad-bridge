@@ -93,6 +93,7 @@ time:
   - platform: sntp
 
 switchbot_keypad_bridge:
+  id: keypad_bridge
   keypad_action:
     name: "Action"
 
@@ -184,6 +185,10 @@ switchbot_keypad_bridge:
   # later. The bridge has no real deadbolt, so it otherwise stays "unlocked"
   # forever — which makes a keypad in "Fast Unlock" mode stop triggering face
   # recognition (it skips the scan while the lock reads unlocked). 0s = never.
+  # For closure-driven rearming instead of a blind timer, set auto_relock: 0s
+  # and call switchbot_keypad_bridge.rearm from a door-sensor automation (the
+  # "Rearm Keypad" button below is the manual equivalent). No door sensor
+  # needed for the timer — it works on the emulated lock alone.
   # auto_relock: 10s
 
   # Protect the always-on web console (pairing wizard + config) with a login.
@@ -344,3 +349,14 @@ button:
       - switchbot_keypad_bridge.read_settings:
           key: !secret keypad_k14
           key_id: 0x45
+
+  # Manually re-enable passive face/palm scanning: sets the emulated lock back
+  # to LOCKED (like auto_relock, but on demand). Point a door-sensor automation
+  # at this same action for closure-driven rearming. No physical lock needed.
+  - platform: template
+    name: "Rearm Keypad"
+    id: kp_rearm
+    icon: "mdi:lock-check"
+    entity_category: config
+    on_press:
+      - switchbot_keypad_bridge.rearm: keypad_bridge

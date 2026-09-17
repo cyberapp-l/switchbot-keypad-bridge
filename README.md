@@ -451,6 +451,7 @@ All options are optional.
 | **Actions** | | |
 | `switchbot_keypad_bridge.send_command` | action | Send one raw plaintext command (hex) to the keypad and log the decrypted reply. See [docs/protocol.md](docs/protocol.md). |
 | `switchbot_keypad_bridge.read_settings` | action | Read all keypad settings in one BLE connection; results arrive via `on_settings_read`. |
+| `switchbot_keypad_bridge.rearm` | action | Return the emulated lock to LOCKED now, re-enabling passive face/palm scanning (and cancelling any pending `auto_relock`). For closure-driven rearming from a door-sensor automation. No physical lock needed. |
 
 ## 🔬 Under the hood
 
@@ -529,6 +530,14 @@ optimistic — the keypad must be awake/in range for a change to land.
 > (e.g. `10s`) so the bridge returns to LOCKED after each unlock, or just leave
 > Fast Unlock off (recommended). While it's on, the keypad stops advertising, so
 > the bridge can't reach it — toggle Fast Unlock back off from the official app.
+>
+> **Face/palm re-arm.** Passive face/palm scanning stops after an unlock until
+> the lock reads LOCKED again — this is the same lock-state dependency. Use
+> `auto_relock` for a timer, or, if you have a door/contact sensor, set
+> `auto_relock: 0s` and call `switchbot_keypad_bridge.rearm` from an automation
+> on confirmed closure (a blind timer can re-arm while the door is still open).
+> The **Rearm Keypad** button in the example config is the manual equivalent.
+> None of this needs a physical SwitchBot lock — it drives the emulated one.
 
 ## ❓ FAQ
 

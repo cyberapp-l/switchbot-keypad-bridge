@@ -482,6 +482,15 @@ void SwitchbotKeypadBridge::read_settings(const std::string &key_hex, int key_id
   this->settings_read_deadline_ = millis() + 30000;
 }
 
+void SwitchbotKeypadBridge::rearm() {
+  // Runs on the main task (ESPHome action) — the same task that owns
+  // lock_state_. Report LOCKED on the next poll and drop any pending timer so
+  // an explicit rearm supersedes it. No HA event, no physical lock.
+  this->relock_pending_ = false;
+  this->lock_state_ = LockState::LOCKED;
+  ESP_LOGD(TAG, "Rearm: lock state set to LOCKED (face/palm scanning re-enabled)");
+}
+
 void SwitchbotKeypadBridge::dump_config() {
   ESP_LOGCONFIG(TAG, "SwitchBot Keypad Bridge:");
   ESP_LOGCONFIG(TAG, "  BLE address: %s", NimBLEDevice::getAddress().toString().c_str());
