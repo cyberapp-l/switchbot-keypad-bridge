@@ -1,0 +1,367 @@
+# SwitchBot Keypad Bridge — WT32-ETH01 (wired Ethernet / ESP-LAN) variant.
+#
+# Identical firmware to the Wi-Fi build; it just reaches the network over the
+# WT32-ETH01's on-board LAN8720 Ethernet PHY instead of Wi-Fi. Useful where
+# Wi-Fi is weak at the door, or when you want a reliable wired access
+# controller.
+#
+# Note on the radio: on the ESP32, BLE and wired Ethernet do NOT share the
+# radio (unlike Wi-Fi + BLE), so this is actually a cleaner combination —
+# the BLE link to the keypad never competes with network traffic.
+#
+# Board: WT32-ETH01 = ESP32-WROOM-32 (plain ESP32, no PSRAM, 4 MB flash).
+
+# ── Ready-to-use config: pulls the component from GitHub (no local
+#    components/ folder needed). Paste this whole file into your ESPHome
+#    dashboard. You only maintain this file + secrets.yaml. ──────────────
+esphome:
+  name: switchbot-keypad-bridge
+  # Fork version — surfaces in Home Assistant device info. Bump on each release
+  # together with the CHANGELOG (see the top of CHANGELOG.md).
+  project:
+    name: cyberapp-l.switchbot-keypad-bridge
+    version: "1.0.0"
+
+esp32:
+  board: esp32dev            # WT32-ETH01 is a plain ESP32-WROOM-32
+  framework:
+    type: esp-idf            # required: PSA crypto, NimBLE, esp_http_server
+
+# The component is pulled straight from GitHub, so you never copy the
+# components/ folder onto your ESPHome instance — it always tracks the repo.
+# `@main` = latest; pin to a release tag (e.g. @v1.0.0) for a fixed version.
+external_components:
+  - source: github://cyberapp-l/switchbot-keypad-bridge@main
+    components: [switchbot_keypad_bridge]
+    refresh: 0s
+
+# ── Wired Ethernet on the WT32-ETH01 (LAN8720 RMII PHY) ────────────────────
+# Reserved pins: GPIO0 (50 MHz clock in), GPIO23 (MDC), GPIO18 (MDIO),
+# GPIO16 (PHY power), plus the fixed RMII data lines
+# (GPIO19/21/22/25/26/27). Don't use any of these for anything else.
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk:
+    mode: CLK_EXT_IN  # 50 MHz clock fed in on GPIO0
+    pin: 0
+  phy_addr: 1
+  power_pin: GPIO16
+  # DHCP is the default. To pin a static address, uncomment:
+  # manual_ip:
+  #   static_ip: 192.168.1.50
+  #   gateway: 192.168.1.1
+  #   subnet: 255.255.255.0
+  #
+  # Troubleshooting: if the link never comes up on your board revision, try
+  # removing `power_pin` — a few early WT32-ETH01 units wire GPIO16
+  # differently. The rest of the pin-out is fixed by the board.
+
+logger:
+  level: VERBOSE
+
+api:
+  # Exposes a Home Assistant service `esphome.<device>_send_keypad_command`.
+  # (switchbot_keypad_bridge.send_command is an ESPHome *action* — a YAML
+  # building block — so it is NOT itself an HA service; this wrapper makes it
+  # one.) Call it from HA → Developer Tools → Actions, e.g.
+  #   command: "0f52010c0202"   # set beep volume = low (see docs/protocol.md)
+  #
+  # WHICH KEY encrypts the command matters:
+  #   • Leave key/key_id empty → the bridge's own session key (lock-emulation
+  #     channel, slot 0xC6/0x88). Fine for lock/unlock-style commands.
+  #   • App-style settings (0f52/0f53 — volume, etc.) were captured on the
+  #     keypad's *communication key* (K14) at key_id 0x45. To replay those,
+  #     pass your K14 as `key` and key_id: 69 (0x45). Get K14 via
+  #     show_communication_key (web console → Settings). It is a secret.
+  # The decrypted reply is logged at WARN (send_command: … decrypted=…).
+  actions:
+    - action: send_keypad_command
+      variables:
+        command: string
+        key: string # optional: 32-hex K14; empty = bridge session key
+        key_id: int # optional: 69 = 0x45 (app channel); 0 = auto
+      then:
+        - switchbot_keypad_bridge.send_command:
+            command: !lambda "return command;"
+            key: !lambda "return key;"
+            key_id: !lambda "return key_id;"
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# TLS in the pairing wizard needs a valid system clock; SNTP keeps it set
+# even before Home Assistant connects.
+time:
+  - platform: sntp
+
+switchbot_keypad_bridge:
+  id: keypad_bridge
+  keypad_action:
+    name: "Action"
+
+  keypad:
+    name: "Keypad"
+
+  # Keypad battery, read from its BLE advertisement once per scan interval.
+  battery_level:
+    name: "Keypad Battery"
+
+  # ↓ battery_scan_interval is a SIBLING of battery_level (2-space indent),
+  #   NOT nested under it. Minimum 30s. You can also set it live in the web
+  #   console → Settings tab (no reflash).
+  # battery_scan_interval: 15min
+
+  unpair_button:
+    name: "Unpair"
+
+  # "Who unlocked" diagnostics (resolved from the users: map below).
+  last_user:
+    name: "Last User"
+  last_method:
+    name: "Last Method"
+
+  # Keypad liveness / signal (diagnostic).
+  rssi:
+    name: "Keypad Signal"
+  keypad_connected:
+    name: "Keypad Connected"
+  last_seen:
+    name: "Keypad Last Seen"
+    device_class: timestamp
+
+  # Alarm / status flags (Keypad Vision only), read on the battery scan — lower
+  # battery_scan_interval if you want them picked up sooner.
+  #   tamper  = pried off its mount   duress = a duress/panic code was entered
+  #   lockout = too many wrong tries  motion = PIR/radar  charging = on charger
+  tamper:
+    name: "Keypad Tamper"
+  duress:
+    name: "Keypad Duress"
+  lockout:
+    name: "Keypad Lockout"
+  motion:
+    name: "Keypad Motion"
+  charging:
+    name: "Keypad Charging"
+
+  on_tamper:
+    - homeassistant.event:
+        event: esphome.switchbot_keypad_tamper
+  on_duress:
+    - homeassistant.event:
+        event: esphome.switchbot_keypad_duress
+
+  # Fires after the "Refresh Keypad Settings" button reads the keypad. `x` is a
+  # vector<int> with one value per setting, in this fixed order (–1 = unread):
+  #   x[0] Disable Keypad   x[1] Fast Unlock   x[2] Sensitivity
+  #   x[3] Face Recognition x[4] Disabling Interval (seconds)  x[5] Volume level
+  # We publish each real value back onto the matching select/switch so the HA
+  # control reflects the keypad instead of the last value you set.
+  on_settings_read:
+    - lambda: |-
+        if (x.size() < 6) return;
+        if (x[0] == 1) id(kp_disable).publish_state(false);
+        else if (x[0] == 2) id(kp_disable).publish_state(true);
+        if (x[1] == 0) id(kp_fastunlock).publish_state(false);
+        else if (x[1] == 1) id(kp_fastunlock).publish_state(true);
+        if (x[2] == 1) id(kp_sensitivity).publish_state("Low");
+        else if (x[2] == 2) id(kp_sensitivity).publish_state("Medium");
+        else if (x[2] == 3) id(kp_sensitivity).publish_state("High");
+        if (x[3] == 1) id(kp_face).publish_state("Auto");
+        else if (x[3] == 2) id(kp_face).publish_state("Manual");
+        else if (x[3] == 3) id(kp_face).publish_state("Custom");
+        if (x[4] == 0) id(kp_interval).publish_state("0s");
+        else if (x[4] == 5) id(kp_interval).publish_state("5s");
+        else if (x[4] == 15) id(kp_interval).publish_state("15s");
+        else if (x[4] == 30) id(kp_interval).publish_state("30s");
+        else if (x[4] == 60) id(kp_interval).publish_state("60s");
+        if (x[5] == 1) id(kp_volume).publish_state("Mute");
+        else if (x[5] == 2) id(kp_volume).publish_state("Low");
+        else if (x[5] == 3) id(kp_volume).publish_state("Medium");
+        else if (x[5] == 4) id(kp_volume).publish_state("High");
+
+  # Drop duplicate unlocks from the same credential within this window.
+  min_unlock_interval: 3s
+
+  # Auto-relock: after an unlock, return the emulated lock to LOCKED this long
+  # later. The bridge has no real deadbolt, so it otherwise stays "unlocked"
+  # forever — which makes a keypad in "Fast Unlock" mode stop triggering face
+  # recognition (it skips the scan while the lock reads unlocked). 0s = never.
+  # For closure-driven rearming instead of a blind timer, set auto_relock: 0s
+  # and call switchbot_keypad_bridge.rearm from a door-sensor automation (the
+  # "Rearm Keypad" button below is the manual equivalent). No door sensor
+  # needed for the timer — it works on the emulated lock alone.
+  # auto_relock: 10s
+
+  # Protect the always-on web console (pairing wizard + config) with a login.
+  # Omit web_password to leave it open on the LAN. Username defaults to "admin".
+  # web_username: "admin"
+  # web_password: !secret web_password
+
+  # Debug/advanced: after pairing, show the keypad's communication key
+  # (key_id + K14) in the web console → Settings, and log it. It is a secret —
+  # only for decrypting your own BLE captures / reverse-engineering. Off here.
+  # show_communication_key: true
+
+  # users:
+  #   - name: "Liran"
+  #     method: fingerprint
+  #     index: 0
+
+  on_unlock:
+    # method: "pin" | "fingerprint" | "nfc" | "face" | "unknown"
+    # index:  credential slot         name: resolved user (from users:, may be empty)
+    - homeassistant.event:
+        event: esphome.switchbot_keypad_unlock
+        data:
+          method: !lambda 'return method;'
+          index: !lambda 'return to_string(index);'
+          name: !lambda 'return name;'
+
+  # on_lock:
+  #   - logger.log: "Locked"
+
+  # on_doorbell:
+  #   - logger.log: "Doorbell pressed"
+
+# ── Keypad settings as native Home Assistant controls ──────────────────────
+# These select/switch entities send the matching 0f52 SET command over BLE (the
+# parameter map is in docs/protocol.md), so you can change the keypad's settings
+# straight from Home Assistant. Notes:
+#   • They are optimistic — the shown state is what you last set, not read back,
+#     and the keypad must be awake/in range for the command to actually land
+#     (tap a key on it first if a change doesn't take).
+#   • They all use the keypad's communication key (K14) at key_id 0x45. Put your
+#     K14 in secrets.yaml ONCE (it is referenced only in the keypad_setting
+#     script below):
+#         keypad_k14: "0286...."   # from show_communication_key (web → Settings)
+#   • Don't want keypad settings control? Delete this script + the select/switch
+#     blocks (and the keypad_k14 secret).
+script:
+  - id: keypad_setting
+    parameters:
+      command: string
+    then:
+      - switchbot_keypad_bridge.send_command:
+          command: !lambda "return command;"
+          key: !secret keypad_k14
+          key_id: 0x45
+
+select:
+  - platform: template
+    name: "Keypad Volume"
+    id: kp_volume
+    icon: "mdi:volume-high"
+    entity_category: config
+    optimistic: true
+    options: ["Mute", "Low", "Medium", "High"]
+    set_action:
+      - script.execute:
+          id: keypad_setting
+          command: !lambda |-
+            if (x == "Mute") return std::string("0f52010c0102");
+            if (x == "Low") return std::string("0f52010c0202");
+            if (x == "Medium") return std::string("0f52010c0302");
+            return std::string("0f52010c0402");  // High
+
+  - platform: template
+    name: "Keypad Sensitivity"
+    id: kp_sensitivity
+    icon: "mdi:signal-distance-variant"
+    entity_category: config
+    optimistic: true
+    options: ["Low", "Medium", "High"]
+    set_action:
+      - script.execute:
+          id: keypad_setting
+          command: !lambda |-
+            if (x == "Low") return std::string("0f52010801");
+            if (x == "Medium") return std::string("0f52010802");
+            return std::string("0f52010803");  // High
+
+  - platform: template
+    name: "Keypad Face Recognition"
+    id: kp_face
+    icon: "mdi:face-recognition"
+    entity_category: config
+    optimistic: true
+    options: ["Auto", "Manual", "Custom"]
+    set_action:
+      - script.execute:
+          id: keypad_setting
+          command: !lambda |-
+            if (x == "Auto") return std::string("0f52010a01");
+            if (x == "Manual") return std::string("0f52010a02");
+            return std::string("0f52010a03");  // Custom
+
+  - platform: template
+    name: "Keypad Disabling Interval"
+    id: kp_interval
+    icon: "mdi:timer-sand"
+    entity_category: config
+    optimistic: true
+    options: ["0s", "5s", "15s", "30s", "60s"]
+    set_action:
+      - script.execute:
+          id: keypad_setting
+          command: !lambda |-
+            if (x == "0s") return std::string("0f52010b00");
+            if (x == "5s") return std::string("0f52010b05");
+            if (x == "15s") return std::string("0f52010b0f");
+            if (x == "30s") return std::string("0f52010b1e");
+            return std::string("0f52010b3c");  // 60s
+
+switch:
+  - platform: template
+    name: "Keypad Fast Unlock"
+    id: kp_fastunlock
+    icon: "mdi:flash"
+    entity_category: config
+    optimistic: true
+    turn_on_action:
+      - script.execute: { id: keypad_setting, command: "0f52010701" }
+    turn_off_action:
+      - script.execute: { id: keypad_setting, command: "0f52010700" }
+
+  # WARNING: turning this ON makes the keypad inoperable — every button and
+  # unlock method stops working until you switch it back off.
+  - platform: template
+    name: "Keypad Disable"
+    id: kp_disable
+    icon: "mdi:lock-off-outline"
+    entity_category: config
+    optimistic: true
+    turn_on_action:
+      - script.execute: { id: keypad_setting, command: "0f52010202" }
+    turn_off_action:
+      - script.execute: { id: keypad_setting, command: "0f52010201" }
+
+button:
+  # Reads every keypad setting in ONE BLE connection and updates the select/
+  # switch controls above to the keypad's real state (they are otherwise
+  # optimistic). Press it when you want to sync; the keypad must be awake/in
+  # range (tap a key on it first if the read comes back empty). Costs one BLE
+  # connect, so this is on-demand rather than polled — see docs/protocol.md.
+  - platform: template
+    name: "Refresh Keypad Settings"
+    id: kp_refresh_settings
+    icon: "mdi:refresh"
+    entity_category: config
+    on_press:
+      - switchbot_keypad_bridge.read_settings:
+          key: !secret keypad_k14
+          key_id: 0x45
+
+  # Manually re-enable passive face/palm scanning: sets the emulated lock back
+  # to LOCKED (like auto_relock, but on demand). Point a door-sensor automation
+  # at this same action for closure-driven rearming. No physical lock needed.
+  - platform: template
+    name: "Rearm Keypad"
+    id: kp_rearm
+    icon: "mdi:lock-check"
+    entity_category: config
+    on_press:
+      - switchbot_keypad_bridge.rearm: keypad_bridge

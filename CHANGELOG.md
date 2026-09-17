@@ -9,7 +9,13 @@ It follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **`switchbot-keypad-bridge-wt32-eth01-remote.yaml`** — a ready-to-use WT32-ETH01
+  config that pulls the component straight from GitHub
+  (`external_components: github://…`), so there's no `components/` folder to copy
+  onto the ESPHome instance. Paste it into the dashboard; you maintain only this
+  file plus `secrets.yaml`.
 
 ## [1.0.0] - 2026-09-17
 
